@@ -29,15 +29,26 @@ type Snapshot = {
   setsA: number;
   setsB: number;
   setIndex: number;
+
+  // Points (normal game)
+  pA: number;
+  pB: number;
+  adTeam: Team | null;
+
+  // Tiebreak
   isTiebreak: boolean;
   tiebreakTarget: number;
   tbA: number;
   tbB: number;
-  pA: number;
-  pB: number;
-  adTeam: Team | null;
-  serverIndex: number;
-  tbPointNumber: number;
+  tbPointNumber: number; // number of points already played in tiebreak
+  tbServingTeam: Team; // who serves the NEXT point in the tiebreak
+  tbPointsLeftInTurn: number; // 1 for first turn, then 2 for subsequent turns
+
+  // Serve rotation (doubles)
+  servingTeam: Team; // who is serving the CURRENT game (or next point if tiebreak uses tbServingTeam)
+  nextServerA: 0 | 1; // which Team A player serves next time Team A serves
+  nextServerB: 0 | 1; // which Team B player serves next time Team B serves
+
   matchOver: boolean;
   winner: Team | null;
 };
@@ -81,21 +92,13 @@ function normalSetWinner(gA: number, gB: number): Team | null {
   return null;
 }
 
-function determineTiebreakServeTeam(startingServerIndex: number, tbPointNumber: number): Team {
-  if (tbPointNumber <= 0) return startingServerIndex % 2 === 0 ? "A" : "B";
-  if (tbPointNumber === 1) return startingServerIndex % 2 === 0 ? "A" : "B";
-
-  const block = tbPointNumber - 2;
-  const pairIndex = Math.floor(block / 2);
-  const flips = 1 + pairIndex;
-  const serverIdx = startingServerIndex + flips;
-  return serverIdx % 2 === 0 ? "A" : "B";
+function toggle01(v: 0 | 1): 0 | 1 {
+  return v === 0 ? 1 : 0;
 }
 
 export default function MatchPage() {
   const router = useRouter();
 
-  // IMPORTANT: do NOT touch localStorage during render (prerender happens on server)
   const [payload, setPayload] = useState<MatchPayload | null>(null);
   const [loaded, setLoaded] = useState<boolean>(false);
 
@@ -108,15 +111,23 @@ export default function MatchPage() {
     setsA: 0,
     setsB: 0,
     setIndex: 0,
+
+    pA: 0,
+    pB: 0,
+    adTeam: null,
+
     isTiebreak: false,
     tiebreakTarget: 7,
     tbA: 0,
     tbB: 0,
-    pA: 0,
-    pB: 0,
-    adTeam: null,
-    serverIndex: 0,
     tbPointNumber: 0,
+    tbServingTeam: "A",
+    tbPointsLeftInTurn: 1,
+
+    servingTeam: "A",
+    nextServerA: 0,
+    nextServerB: 0,
+
     matchOver: false,
     winner: null,
   });
@@ -144,24 +155,39 @@ export default function MatchPage() {
     });
   }
 
-  function randomFirstServer() {
-    setState((prev) => {
-      pushHistory(prev);
-      return { ...prev, serverIndex: Math.random() < 0.5 ? 0 : 1 };
-    });
-  }
-
   function toggleServeHelper() {
     setShowServeHelper((v) => !v);
   }
 
+  function randomFirstServer() {
+    // Randomise:
+    // - which team serves first
+    // - which player in each team is "next server"
+    // This avoids weird patterns when people reshuffle.
+    setState((prev) => {
+      pushHistory(prev);
+      const firstTeam: Team = Math.random() < 0.5 ? "A" : "B";
+      const a: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
+      const b: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
+      return {
+        ...prev,
+        servingTeam: firstTeam,
+        nextServerA: a,
+        nextServerB: b,
+        // If currently in tiebreak, align the next point server too
+        tbServingTeam: prev.isTiebreak ? firstTeam : prev.tbServingTeam,
+        tbPointsLeftInTurn: prev.isTiebreak ? 1 : prev.tbPointsLeftInTurn,
+      };
+    });
+  }
+
   const teamAPlayers = useMemo(() => {
-    if (!payload) return ["Team A", ""];
+    if (!payload) return ["A1", "A2"];
     return [payload.players[0] ?? "A1", payload.players[1] ?? "A2"];
   }, [payload]);
 
   const teamBPlayers = useMemo(() => {
-    if (!payload) return ["Team B", ""];
+    if (!payload) return ["B1", "B2"];
     return [payload.players[2] ?? "B1", payload.players[3] ?? "B2"];
   }, [payload]);
 
@@ -172,6 +198,19 @@ export default function MatchPage() {
     return shouldUseSuperTiebreakFinalSet(payload, state.setIndex);
   }, [payload, state.setIndex]);
 
+  // Who is serving *right now* (player name), based on state and whether we are in tiebreak
+  const currentServerInfo = useMemo(() => {
+    const servingTeam: Team = state.isTiebreak ? state.tbServingTeam : state.servingTeam;
+
+    if (servingTeam === "A") {
+      const idx = state.nextServerA; // 0 or 1
+      return { team: "A" as Team, playerIndex: idx, name: teamAPlayers[idx] };
+    } else {
+      const idx = state.nextServerB; // 0 or 1 but in Team B
+      return { team: "B" as Team, playerIndex: idx, name: teamBPlayers[idx] };
+    }
+  }, [state.isTiebreak, state.servingTeam, state.tbServingTeam, state.nextServerA, state.nextServerB, teamAPlayers, teamBPlayers]);
+
   const scoreDisplay = useMemo(() => {
     if (state.isTiebreak) return { a: String(state.tbA), b: String(state.tbB) };
 
@@ -180,21 +219,14 @@ export default function MatchPage() {
     const baseB = map[clamp(state.pB, 0, 3)];
 
     if (state.pA >= 3 && state.pB >= 3) {
-      if (payload?.rules.goldenPoint) {
-        return { a: "40", b: "40" };
-      }
+      if (payload?.rules.goldenPoint) return { a: "40", b: "40" };
       if (state.adTeam === "A") return { a: "AD", b: "40" };
       if (state.adTeam === "B") return { a: "40", b: "AD" };
       return { a: "40", b: "40" };
     }
 
     return { a: baseA, b: baseB };
-  }, [payload, state.adTeam, state.isTiebreak, state.pA, state.pB, state.tbA, state.tbB]);
-
-  const currentServerTeam: Team = useMemo(() => {
-    if (!state.isTiebreak) return state.serverIndex % 2 === 0 ? "A" : "B";
-    return determineTiebreakServeTeam(state.serverIndex, state.tbPointNumber);
-  }, [state.isTiebreak, state.serverIndex, state.tbPointNumber]);
+  }, [payload, state.isTiebreak, state.tbA, state.tbB, state.pA, state.pB, state.adTeam]);
 
   function checkMatchWinner(next: Snapshot): Snapshot {
     if (!payload) return next;
@@ -205,6 +237,8 @@ export default function MatchPage() {
   }
 
   function startTiebreak(prev: Snapshot, target: number): Snapshot {
+    // Tiebreak starts with whoever would serve next in normal rotation (prev.servingTeam).
+    // First turn is 1 point, then it becomes 2 points per turn.
     return {
       ...prev,
       isTiebreak: true,
@@ -212,48 +246,106 @@ export default function MatchPage() {
       tbA: 0,
       tbB: 0,
       tbPointNumber: 0,
+      tbServingTeam: prev.servingTeam,
+      tbPointsLeftInTurn: 1,
+
+      // reset normal points
       pA: 0,
       pB: 0,
       adTeam: null,
     };
   }
 
-  function winGame(prev: Snapshot, winner: Team): Snapshot {
+  function rotateServeAfterGame(prev: Snapshot): Snapshot {
+    // When a service game ends:
+    // - Toggle the server within the team that just served
+    // - Flip serving team to the other team for the next game
+    if (prev.servingTeam === "A") {
+      return {
+        ...prev,
+        nextServerA: toggle01(prev.nextServerA),
+        servingTeam: "B",
+      };
+    }
+    return {
+      ...prev,
+      nextServerB: toggle01(prev.nextServerB),
+      servingTeam: "A",
+    };
+  }
+
+  function rotateServeAfterTiebreakPoint(prev: Snapshot): Snapshot {
+    // After each tiebreak point:
+    // - Decrease points left in current serve turn
+    // - When a turn ends, flip serving team, set next turn to 2 points,
+    //   and toggle that team's next server (because a new server turn starts).
     let next: Snapshot = { ...prev };
 
-    if (winner === "A") next.gamesA += 1;
+    let remaining = next.tbPointsLeftInTurn - 1;
+
+    if (remaining > 0) {
+      next.tbPointsLeftInTurn = remaining;
+      return next;
+    }
+
+    // Turn ends, flip team
+    const newTeam: Team = next.tbServingTeam === "A" ? "B" : "A";
+    next.tbServingTeam = newTeam;
+    next.tbPointsLeftInTurn = 2;
+
+    // New turn begins for newTeam, toggle that team's next server
+    if (newTeam === "A") next.nextServerA = toggle01(next.nextServerA);
+    else next.nextServerB = toggle01(next.nextServerB);
+
+    return next;
+  }
+
+  function winGame(prev: Snapshot, winnerTeam: Team): Snapshot {
+    let next: Snapshot = { ...prev };
+
+    // increment games
+    if (winnerTeam === "A") next.gamesA += 1;
     else next.gamesB += 1;
 
+    // reset points for next game
     next.pA = 0;
     next.pB = 0;
     next.adTeam = null;
 
-    next.serverIndex += 1;
+    // rotate serve for next game
+    next = rotateServeAfterGame(next);
 
+    // check set win
     const setWin = normalSetWinner(next.gamesA, next.gamesB);
     if (setWin) {
       if (setWin === "A") next.setsA += 1;
       else next.setsB += 1;
 
+      // reset games for next set
       next.gamesA = 0;
       next.gamesB = 0;
+
+      // clear any tiebreak flags
       next.isTiebreak = false;
+      next.tiebreakTarget = 7;
       next.tbA = 0;
       next.tbB = 0;
       next.tbPointNumber = 0;
+      next.tbServingTeam = next.servingTeam;
+      next.tbPointsLeftInTurn = 1;
 
       next.setIndex += 1;
       next = checkMatchWinner(next);
 
+      // If final set should be super tiebreak, start it immediately
       if (!next.matchOver && payload && shouldUseSuperTiebreakFinalSet(payload, next.setIndex)) {
-        next.gamesA = 0;
-        next.gamesB = 0;
         next = startTiebreak(next, 10);
       }
 
       return next;
     }
 
+    // Trigger normal tiebreak at 6-6 (not in super final set)
     if (payload && !inSuperFinalSet && next.gamesA === 6 && next.gamesB === 6) {
       next = startTiebreak(next, 7);
     }
@@ -261,25 +353,35 @@ export default function MatchPage() {
     return next;
   }
 
-  function winTiebreakAsSet(prev: Snapshot, winner: Team): Snapshot {
+  function winTiebreakAsSet(prev: Snapshot, winnerTeam: Team): Snapshot {
     let next: Snapshot = { ...prev };
 
-    if (winner === "A") next.setsA += 1;
+    // award set
+    if (winnerTeam === "A") next.setsA += 1;
     else next.setsB += 1;
 
-    next.gamesA = 0;
-    next.gamesB = 0;
+    // reset tiebreak state
     next.isTiebreak = false;
+    next.tiebreakTarget = 7;
     next.tbA = 0;
     next.tbB = 0;
     next.tbPointNumber = 0;
+    next.tbPointsLeftInTurn = 1;
+
+    // reset games (super tiebreak set is represented only by tb points)
+    next.gamesA = 0;
+    next.gamesB = 0;
+
+    // reset normal points
     next.pA = 0;
     next.pB = 0;
     next.adTeam = null;
 
+    // advance set
     next.setIndex += 1;
     next = checkMatchWinner(next);
 
+    // If next set is super final set, start it
     if (!next.matchOver && payload && shouldUseSuperTiebreakFinalSet(payload, next.setIndex)) {
       next = startTiebreak(next, 10);
     }
@@ -295,25 +397,37 @@ export default function MatchPage() {
 
       pushHistory(prev);
 
+      // Tiebreak scoring
       if (prev.isTiebreak) {
         let next: Snapshot = { ...prev };
+
         if (team === "A") next.tbA += 1;
         else next.tbB += 1;
 
         next.tbPointNumber = prev.tbPointNumber + 1;
 
+        // rotate serve after the point (this affects NEXT point)
+        next = rotateServeAfterTiebreakPoint(next);
+
         const tbWin = tiebreakWinner(next.tbA, next.tbB, next.tiebreakTarget);
         if (tbWin) {
           next = winTiebreakAsSet(next, tbWin);
         }
+
         return next;
       }
 
+      // Normal game scoring
       const golden = payload.rules.goldenPoint;
 
+      // Deuce zone (40-40 or beyond)
       if (prev.pA >= 3 && prev.pB >= 3) {
-        if (golden) return winGame(prev, team);
+        if (golden) {
+          // Next point wins game
+          return winGame(prev, team);
+        }
 
+        // Advantage mode
         if (prev.adTeam === null) return { ...prev, adTeam: team };
         if (prev.adTeam === team) return winGame(prev, team);
         return { ...prev, adTeam: null };
@@ -323,6 +437,7 @@ export default function MatchPage() {
       if (team === "A") next.pA += 1;
       else next.pB += 1;
 
+      // win conditions
       const lead = next.pA - next.pB;
       if (next.pA >= 4 || next.pB >= 4) {
         if (Math.abs(lead) >= 2) return winGame(prev, lead > 0 ? "A" : "B");
@@ -344,14 +459,19 @@ export default function MatchPage() {
       setsA: 0,
       setsB: 0,
       setIndex: 0,
+
+      pA: 0,
+      pB: 0,
+      adTeam: null,
+
       isTiebreak: false,
       tiebreakTarget: 7,
       tbA: 0,
       tbB: 0,
-      pA: 0,
-      pB: 0,
-      adTeam: null,
       tbPointNumber: 0,
+      tbServingTeam: prev.servingTeam,
+      tbPointsLeftInTurn: 1,
+
       matchOver: false,
       winner: null,
     }));
@@ -418,6 +538,8 @@ export default function MatchPage() {
     },
     title: { fontWeight: 950, fontSize: 18, letterSpacing: 0.2 },
     mini: { fontSize: 12, opacity: 0.85, marginTop: 2 },
+    serveLine: { fontSize: 12, opacity: 0.9, marginTop: 4, fontWeight: 900, color: TEAL },
+
     board: {
       background: "rgba(255,255,255,0.06)",
       border: "1px solid rgba(255,255,255,0.12)",
@@ -480,7 +602,6 @@ export default function MatchPage() {
     },
   };
 
-  // Small loading state while localStorage is read
   if (!loaded) {
     return (
       <div style={styles.page}>
@@ -493,6 +614,8 @@ export default function MatchPage() {
 
   if (!payload) return null;
 
+  const servingTeamForHighlight: Team = state.isTiebreak ? state.tbServingTeam : state.servingTeam;
+
   return (
     <div style={styles.page}>
       <div style={styles.shell}>
@@ -503,6 +626,7 @@ export default function MatchPage() {
               Sets {state.setsA} {state.setsB} , Games {state.gamesA} {state.gamesB}
               {inSuperFinalSet && !state.matchOver ? " , Super tiebreak final set" : ""}
             </div>
+            {showServeHelper ? <div style={styles.serveLine}>Serving: {currentServerInfo.name}</div> : null}
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -517,12 +641,14 @@ export default function MatchPage() {
 
         <div style={styles.board}>
           <div style={styles.boardGrid}>
-            <div style={teamCardStyle(showServeHelper && currentServerTeam === "A")}>
+            <div style={teamCardStyle(showServeHelper && servingTeamForHighlight === "A")}>
               <div style={styles.teamName}>Team A</div>
               <div style={styles.players}>
                 {teamAPlayers[0]}
+                {showServeHelper && currentServerInfo.team === "A" && currentServerInfo.playerIndex === 0 ? "  • SERVE" : ""}
                 <br />
                 {teamAPlayers[1]}
+                {showServeHelper && currentServerInfo.team === "A" && currentServerInfo.playerIndex === 1 ? "  • SERVE" : ""}
               </div>
 
               <div style={styles.scoreRow}>
@@ -541,12 +667,14 @@ export default function MatchPage() {
               </div>
             </div>
 
-            <div style={teamCardStyle(showServeHelper && currentServerTeam === "B")}>
+            <div style={teamCardStyle(showServeHelper && servingTeamForHighlight === "B")}>
               <div style={styles.teamName}>Team B</div>
               <div style={styles.players}>
                 {teamBPlayers[0]}
+                {showServeHelper && currentServerInfo.team === "B" && currentServerInfo.playerIndex === 0 ? "  • SERVE" : ""}
                 <br />
                 {teamBPlayers[1]}
+                {showServeHelper && currentServerInfo.team === "B" && currentServerInfo.playerIndex === 1 ? "  • SERVE" : ""}
               </div>
 
               <div style={styles.scoreRow}>
