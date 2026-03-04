@@ -42,8 +42,10 @@ export default function MatchSetupPage() {
   const [selected, setSelected] = useState<string[]>(["", "", "", ""]);
 
   const [sets, setSets] = useState<number>(3);
-  const [goldenPoint, setGoldenPoint] = useState<boolean>(true);
-  const [superTiebreakFinalSet, setSuperTiebreakFinalSet] = useState<boolean>(true);
+
+  // Safer defaults, user can enable if they want.
+  const [goldenPoint, setGoldenPoint] = useState<boolean>(false);
+  const [superTiebreakFinalSet, setSuperTiebreakFinalSet] = useState<boolean>(false);
 
   const [newPlayerName, setNewPlayerName] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -63,6 +65,17 @@ export default function MatchSetupPage() {
     if (names.length !== 4) return false;
     return new Set(names).size === 4;
   }, [selected]);
+
+  const rulesSummary = useMemo(() => {
+    const gp = goldenPoint ? "Golden point" : "Advantage";
+    const st =
+      sets === 1
+        ? "No final set rules"
+        : superTiebreakFinalSet
+        ? "Super tiebreak final set"
+        : "Normal final set";
+    return `${gp} , ${st}`;
+  }, [goldenPoint, sets, superTiebreakFinalSet]);
 
   function updateSelected(index: number, value: string) {
     setError("");
@@ -106,7 +119,7 @@ export default function MatchSetupPage() {
       sets,
       rules: {
         goldenPoint,
-        superTiebreakFinalSet,
+        superTiebreakFinalSet: sets === 1 ? false : superTiebreakFinalSet,
       },
     };
 
@@ -147,7 +160,17 @@ export default function MatchSetupPage() {
       boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
     },
     title: { fontSize: 22, fontWeight: 800, letterSpacing: 0.2, marginBottom: 4 },
-    subtitle: { opacity: 0.85, marginBottom: 16, fontSize: 13 },
+    subtitle: { opacity: 0.85, marginBottom: 10, fontSize: 13 },
+    summary: {
+      opacity: 0.9,
+      fontSize: 12,
+      fontWeight: 850,
+      background: "rgba(0,0,0,0.18)",
+      border: "1px solid rgba(255,255,255,0.10)",
+      borderRadius: 12,
+      padding: 10,
+      marginBottom: 12,
+    },
     sectionTitle: { fontWeight: 800, marginTop: 14, marginBottom: 10 },
     row: { display: "flex", gap: 10, alignItems: "center" },
     grid: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
@@ -225,6 +248,8 @@ export default function MatchSetupPage() {
         <div style={styles.title}>Standard Match Setup</div>
         <div style={styles.subtitle}>Pick 4 players, pick sets, then start scoring.</div>
 
+        <div style={styles.summary}>Rules: {rulesSummary}</div>
+
         <div style={styles.sectionTitle}>Players</div>
         <div style={styles.grid}>
           {["Player 1", "Player 2", "Player 3", "Player 4"].map((label, i) => (
@@ -294,10 +319,11 @@ export default function MatchSetupPage() {
             />
           </div>
 
-          <div style={styles.toggle}>
+          <div style={{ ...styles.toggle, opacity: sets === 1 ? 0.55 : 1 }}>
             <div>
               <div style={{ fontWeight: 900 }}>Super tiebreak as final set</div>
               <div style={styles.small}>Final set becomes first to 10, win by 2.</div>
+              {sets === 1 ? <div style={styles.small}>Not used for 1 set matches.</div> : null}
             </div>
             <input
               aria-label="Super tiebreak final set"
@@ -305,6 +331,7 @@ export default function MatchSetupPage() {
               checked={superTiebreakFinalSet}
               onChange={(e) => setSuperTiebreakFinalSet(e.target.checked)}
               style={{ transform: "scale(1.3)" }}
+              disabled={sets === 1}
             />
           </div>
         </div>

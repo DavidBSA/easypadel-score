@@ -20,6 +20,7 @@ type MatchPayload = {
 };
 
 const STORAGE_MATCH_KEY = "eps_match_payload";
+const STORAGE_UI_OUTDOOR_KEY = "eps_ui_outdoor_mode";
 
 type Team = "A" | "B";
 
@@ -96,6 +97,106 @@ function toggle01(v: 0 | 1): 0 | 1 {
   return v === 0 ? 1 : 0;
 }
 
+function stylesFor(outdoor: boolean): Record<string, React.CSSProperties> {
+  const pad = outdoor ? 14 : 12;
+
+  return {
+    page: {
+      minHeight: "100vh",
+      background: NAVY,
+      color: WHITE,
+      padding: pad,
+      display: "flex",
+      justifyContent: "center",
+    },
+    shell: {
+      width: "100%",
+      maxWidth: 760,
+      display: "grid",
+      gap: outdoor ? 14 : 12,
+    },
+    topBar: {
+      background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.14)",
+      borderRadius: 18,
+      padding: outdoor ? 14 : 12,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+    },
+    title: { fontWeight: 950, fontSize: outdoor ? 20 : 18, letterSpacing: 0.2 },
+    mini: { fontSize: outdoor ? 13 : 12, opacity: 0.9, marginTop: 3, fontWeight: 800 },
+    serveLine: { fontSize: outdoor ? 13 : 12, opacity: 0.95, marginTop: 6, fontWeight: 950, color: TEAL },
+
+    board: {
+      background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.14)",
+      borderRadius: 20,
+      padding: outdoor ? 14 : 12,
+    },
+    boardGrid: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: outdoor ? 12 : 10,
+    },
+    teamName: { fontWeight: 1000, fontSize: outdoor ? 18 : 16, marginBottom: 6, letterSpacing: 0.2 },
+    players: { opacity: 0.9, fontSize: outdoor ? 13 : 12, lineHeight: 1.35, fontWeight: outdoor ? 800 : 700 },
+
+    scoreRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr 1fr",
+      gap: outdoor ? 10 : 8,
+      marginTop: outdoor ? 12 : 10,
+      alignItems: "end",
+    },
+    scoreBox: {
+      borderRadius: 16,
+      padding: outdoor ? 12 : 10,
+      background: "rgba(0,0,0,0.26)",
+      border: outdoor ? "1px solid rgba(255,255,255,0.16)" : "1px solid rgba(255,255,255,0.12)",
+      textAlign: "center",
+    },
+    label: { fontSize: outdoor ? 12 : 11, opacity: 0.9, fontWeight: 950 },
+    big: { fontSize: outdoor ? 44 : 34, fontWeight: 1100, letterSpacing: 0.6, marginTop: 4, lineHeight: 1.05 },
+    mid: { fontSize: outdoor ? 26 : 20, fontWeight: 1000, marginTop: 4, lineHeight: 1.1 },
+
+    controls: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: outdoor ? 12 : 10,
+    },
+    btn: {
+      borderRadius: 18,
+      border: "none",
+      padding: outdoor ? "18px 14px" : "16px 14px",
+      fontSize: outdoor ? 20 : 18,
+      fontWeight: 1100,
+      cursor: "pointer",
+    },
+    btnA: { background: TEAL, color: NAVY },
+    btnB: {
+      background: "rgba(255,255,255,0.10)",
+      color: WHITE,
+      border: "1px solid rgba(255,255,255,0.18)",
+    },
+
+    actionRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: outdoor ? 12 : 10 },
+    smallBtn: {
+      borderRadius: 16,
+      padding: outdoor ? "14px 10px" : "12px 10px",
+      fontSize: outdoor ? 15 : 14,
+      fontWeight: 1000,
+      cursor: "pointer",
+      background: "rgba(255,255,255,0.08)",
+      color: WHITE,
+      border: "1px solid rgba(255,255,255,0.14)",
+    },
+
+    footer: { opacity: 0.9, fontSize: outdoor ? 13 : 12, textAlign: "center", paddingBottom: 10, fontWeight: 800 },
+  };
+}
+
 export default function MatchPage() {
   const router = useRouter();
 
@@ -104,6 +205,7 @@ export default function MatchPage() {
 
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [showServeHelper, setShowServeHelper] = useState<boolean>(true);
+  const [outdoorMode, setOutdoorMode] = useState<boolean>(false);
 
   const [state, setState] = useState<Snapshot>({
     gamesA: 0,
@@ -135,12 +237,20 @@ export default function MatchPage() {
   useEffect(() => {
     const p = safeParseJSON<MatchPayload | null>(localStorage.getItem(STORAGE_MATCH_KEY), null);
     setPayload(p);
+
+    const ui = safeParseJSON<{ outdoor: boolean } | null>(localStorage.getItem(STORAGE_UI_OUTDOOR_KEY), null);
+    setOutdoorMode(Boolean(ui?.outdoor));
+
     setLoaded(true);
   }, []);
 
   useEffect(() => {
     if (loaded && !payload) router.push("/match/setup");
   }, [loaded, payload, router]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_UI_OUTDOOR_KEY, JSON.stringify({ outdoor: outdoorMode }));
+  }, [outdoorMode]);
 
   function pushHistory(prev: Snapshot) {
     setHistory((h) => [...h, prev]);
@@ -157,6 +267,10 @@ export default function MatchPage() {
 
   function toggleServeHelper() {
     setShowServeHelper((v) => !v);
+  }
+
+  function toggleOutdoorMode() {
+    setOutdoorMode((v) => !v);
   }
 
   function randomFirstServer() {
@@ -198,15 +312,15 @@ export default function MatchPage() {
     return shouldUseSuperTiebreakFinalSet(payload, state.setIndex);
   }, [payload, state.setIndex]);
 
-  // Who is serving *right now* (player name), based on state and whether we are in tiebreak
+  // Who is serving right now (player name), based on state and whether we are in tiebreak
   const currentServerInfo = useMemo(() => {
     const servingTeam: Team = state.isTiebreak ? state.tbServingTeam : state.servingTeam;
 
     if (servingTeam === "A") {
-      const idx = state.nextServerA; // 0 or 1
+      const idx = state.nextServerA;
       return { team: "A" as Team, playerIndex: idx, name: teamAPlayers[idx] };
     } else {
-      const idx = state.nextServerB; // 0 or 1 but in Team B
+      const idx = state.nextServerB;
       return { team: "B" as Team, playerIndex: idx, name: teamBPlayers[idx] };
     }
   }, [state.isTiebreak, state.servingTeam, state.tbServingTeam, state.nextServerA, state.nextServerB, teamAPlayers, teamBPlayers]);
@@ -281,7 +395,7 @@ export default function MatchPage() {
     //   and toggle that team's next server (because a new server turn starts).
     let next: Snapshot = { ...prev };
 
-    let remaining = next.tbPointsLeftInTurn - 1;
+    const remaining = next.tbPointsLeftInTurn - 1;
 
     if (remaining > 0) {
       next.tbPointsLeftInTurn = remaining;
@@ -345,8 +459,8 @@ export default function MatchPage() {
       return next;
     }
 
-    // Trigger normal tiebreak at 6-6 (not in super final set)
-    if (payload && !inSuperFinalSet && next.gamesA === 6 && next.gamesB === 6) {
+    // Trigger normal tiebreak at 6 6 only if this set is not the super final set
+    if (payload && !shouldUseSuperTiebreakFinalSet(payload, prev.setIndex) && next.gamesA === 6 && next.gamesB === 6) {
       next = startTiebreak(next, 7);
     }
 
@@ -420,7 +534,7 @@ export default function MatchPage() {
       // Normal game scoring
       const golden = payload.rules.goldenPoint;
 
-      // Deuce zone (40-40 or beyond)
+      // Deuce zone (40 40 or beyond)
       if (prev.pA >= 3 && prev.pB >= 3) {
         if (golden) {
           // Next point wins game
@@ -492,121 +606,32 @@ export default function MatchPage() {
   }, [payload, state.isTiebreak, state.matchOver, state.setIndex, state.tiebreakTarget, state.winner]);
 
   const chipStyle = (active: boolean): React.CSSProperties => ({
-    padding: "10px 12px",
+    padding: outdoorMode ? "12px 14px" : "10px 12px",
     borderRadius: 999,
     border: active ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.16)",
-    background: active ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.08)",
+    background: active ? "rgba(0,168,168,0.18)" : "rgba(255,255,255,0.08)",
     color: WHITE,
-    fontWeight: 900,
+    fontWeight: 1000,
     cursor: "pointer",
     userSelect: "none",
-    fontSize: 13,
+    fontSize: outdoorMode ? 14 : 13,
     whiteSpace: "nowrap",
   });
 
   const teamCardStyle = (serving: boolean): React.CSSProperties => ({
-    borderRadius: 16,
-    padding: 12,
-    background: serving ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.06)",
-    border: serving ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.12)",
+    borderRadius: 18,
+    padding: outdoorMode ? 14 : 12,
+    background: serving ? "rgba(0,168,168,0.18)" : "rgba(255,255,255,0.06)",
+    border: serving ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.14)",
   });
 
-  const styles: Record<string, React.CSSProperties> = {
-    page: {
-      minHeight: "100vh",
-      background: NAVY,
-      color: WHITE,
-      padding: 12,
-      display: "flex",
-      justifyContent: "center",
-    },
-    shell: {
-      width: "100%",
-      maxWidth: 760,
-      display: "grid",
-      gap: 12,
-    },
-    topBar: {
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      borderRadius: 16,
-      padding: 12,
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 10,
-    },
-    title: { fontWeight: 950, fontSize: 18, letterSpacing: 0.2 },
-    mini: { fontSize: 12, opacity: 0.85, marginTop: 2 },
-    serveLine: { fontSize: 12, opacity: 0.9, marginTop: 4, fontWeight: 900, color: TEAL },
-
-    board: {
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      borderRadius: 18,
-      padding: 12,
-    },
-    boardGrid: {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: 10,
-    },
-    teamName: { fontWeight: 950, fontSize: 16, marginBottom: 4 },
-    players: { opacity: 0.85, fontSize: 12, lineHeight: 1.3 },
-    scoreRow: {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr 1fr",
-      gap: 8,
-      marginTop: 10,
-      alignItems: "end",
-    },
-    scoreBox: {
-      borderRadius: 14,
-      padding: 10,
-      background: "rgba(0,0,0,0.22)",
-      border: "1px solid rgba(255,255,255,0.10)",
-      textAlign: "center",
-    },
-    label: { fontSize: 11, opacity: 0.85, fontWeight: 800 },
-    big: { fontSize: 34, fontWeight: 1000, letterSpacing: 0.5, marginTop: 2 },
-    mid: { fontSize: 20, fontWeight: 950, marginTop: 2 },
-    controls: {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: 10,
-    },
-    btn: {
-      borderRadius: 16,
-      border: "none",
-      padding: "16px 14px",
-      fontSize: 18,
-      fontWeight: 1000,
-      cursor: "pointer",
-    },
-    btnA: { background: TEAL, color: NAVY },
-    btnB: {
-      background: "rgba(255,255,255,0.10)",
-      color: WHITE,
-      border: "1px solid rgba(255,255,255,0.18)",
-    },
-    actionRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 },
-    smallBtn: {
-      borderRadius: 14,
-      padding: "12px 10px",
-      fontSize: 14,
-      fontWeight: 900,
-      cursor: "pointer",
-      background: "rgba(255,255,255,0.08)",
-      color: WHITE,
-      border: "1px solid rgba(255,255,255,0.14)",
-    },
-  };
+  const styles = useMemo(() => stylesFor(outdoorMode), [outdoorMode]);
 
   if (!loaded) {
     return (
       <div style={styles.page}>
         <div style={{ ...styles.shell, alignItems: "center", paddingTop: 40 }}>
-          <div style={{ opacity: 0.85, fontWeight: 900 }}>Loading match…</div>
+          <div style={{ opacity: 0.9, fontWeight: 950 }}>Loading match…</div>
         </div>
       </div>
     );
@@ -621,7 +646,10 @@ export default function MatchPage() {
       <div style={styles.shell}>
         <div style={styles.topBar}>
           <div>
-            <div style={styles.title}>{headerTitle}</div>
+            <div style={styles.title}>
+              {headerTitle}
+              {outdoorMode ? " , Outdoor" : ""}
+            </div>
             <div style={styles.mini}>
               Sets {state.setsA} {state.setsB} , Games {state.gamesA} {state.gamesB}
               {inSuperFinalSet && !state.matchOver ? " , Super tiebreak final set" : ""}
@@ -630,6 +658,9 @@ export default function MatchPage() {
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <div style={chipStyle(outdoorMode)} onClick={toggleOutdoorMode}>
+              Outdoor mode
+            </div>
             <div style={chipStyle(showServeHelper)} onClick={toggleServeHelper}>
               Serve helper
             </div>
@@ -716,7 +747,7 @@ export default function MatchPage() {
           </button>
         </div>
 
-        <div style={{ opacity: 0.85, fontSize: 12, textAlign: "center", paddingBottom: 8 }}>
+        <div style={styles.footer}>
           First to {targetSetsToWin} sets wins. {payload.rules.goldenPoint ? "Golden point enabled." : "Advantage enabled."}{" "}
           {payload.rules.superTiebreakFinalSet ? "Final set may be a super tiebreak." : ""}
         </div>
