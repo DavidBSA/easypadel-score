@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main
@@ -10,7 +12,7 @@ export default function Home() {
         background: "#0F1E2E",
         color: "#FFFFFF",
         fontFamily: "Arial",
-        textAlign: "center"
+        textAlign: "center",
       }}
     >
       <h1 style={{ fontSize: "2.5rem", marginBottom: "20px" }}>
@@ -21,7 +23,8 @@ export default function Home() {
         Simple scoring for Padel matches
       </p>
 
-      <button
+      <Link
+        href="/match"
         style={{
           padding: "16px 32px",
           fontSize: "18px",
@@ -30,11 +33,13 @@ export default function Home() {
           background: "#00A8A8",
           color: "#FFFFFF",
           cursor: "pointer",
-          fontWeight: "bold"
+          fontWeight: "bold",
+          textDecoration: "none",
+          display: "inline-block",
         }}
       >
         Start Match
-      </button>
+      </Link>
     </main>
   );
 }
