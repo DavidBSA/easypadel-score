@@ -1,84 +1,106 @@
 "use client";
 
-import Link from "next/link";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
 
 const NAVY = "#0F1E2E";
 const WHITE = "#FFFFFF";
 const TEAL = "#00A8A8";
 
-function cleanName(value: string) {
-  return value.trim();
+type MatchRules = {
+  goldenPoint: boolean;
+  superTiebreakFinalSet: boolean;
+};
+
+type MatchPayload = {
+  players: string[];
+  mode: "standard";
+  sets: number;
+  rules: MatchRules;
+};
+
+const STORAGE_PLAYERS_KEY = "eps_players";
+const STORAGE_MATCH_KEY = "eps_match_payload";
+
+function safeParseJSON<T>(value: string | null, fallback: T): T {
+  try {
+    if (!value) return fallback;
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
-export default function StandardMatchSetupPage() {
+function normalizeName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+export default function MatchSetupPage() {
   const router = useRouter();
 
-  const [playerPool, setPlayerPool] = useState<string[]>([]);
-  const [p1, setP1] = useState("");
-  const [p2, setP2] = useState("");
-  const [p3, setP3] = useState("");
-  const [p4, setP4] = useState("");
+  const [savedPlayers, setSavedPlayers] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>(["", "", "", ""]);
 
-  const [sets, setSets] = useState<1 | 3 | 5>(3);
+  const [sets, setSets] = useState<number>(3);
+  const [goldenPoint, setGoldenPoint] = useState<boolean>(true);
+  const [superTiebreakFinalSet, setSuperTiebreakFinalSet] = useState<boolean>(true);
 
-  const [goldenPoint, setGoldenPoint] = useState(false);
-  const [superTiebreakFinalSet, setSuperTiebreakFinalSet] = useState(false);
+  const [newPlayerName, setNewPlayerName] = useState<string>("");
+  const [error, setError] = useState<string>("");
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("eps_players");
-      const parsed = raw ? (JSON.parse(raw) as string[]) : [];
-      const cleaned = parsed.map(cleanName).filter(Boolean);
-      setPlayerPool(Array.from(new Set(cleaned)));
-    } catch {
-      setPlayerPool([]);
+    const initial = safeParseJSON<string[]>(localStorage.getItem(STORAGE_PLAYERS_KEY), []);
+    const cleaned = Array.from(new Set(initial.map(normalizeName).filter(Boolean)));
+    setSavedPlayers(cleaned);
+    if (cleaned.length >= 4) {
+      setSelected([cleaned[0] ?? "", cleaned[1] ?? "", cleaned[2] ?? "", cleaned[3] ?? ""]);
     }
   }, []);
 
-  function savePool(next: string[]) {
-    const cleaned = next.map(cleanName).filter(Boolean);
-    const unique = Array.from(new Set(cleaned));
-    setPlayerPool(unique);
-    try {
-      localStorage.setItem("eps_players", JSON.stringify(unique));
-    } catch {}
+  const canStart = useMemo(() => {
+    const names = selected.map(normalizeName).filter(Boolean);
+    if (names.length !== 4) return false;
+    const unique = new Set(names);
+    return unique.size === 4;
+  }, [selected]);
+
+  function updateSelected(index: number, value: string) {
+    setError("");
+    setSelected((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
   }
 
   function addPlayer() {
-    const name = cleanName(window.prompt("Enter player name") || "");
+    const name = normalizeName(newPlayerName);
     if (!name) return;
-    savePool([...playerPool, name]);
-  }
 
-  const selected = useMemo(() => {
-    return [p1, p2, p3, p4].map(cleanName).filter(Boolean);
-  }, [p1, p2, p3, p4]);
+    setError("");
 
-  const hasDuplicates = useMemo(() => {
-    const uniq = new Set(selected);
-    return uniq.size !== selected.length;
-  }, [selected]);
+    setSavedPlayers((prev) => {
+      const next = Array.from(new Set([...prev, name]));
+      localStorage.setItem(STORAGE_PLAYERS_KEY, JSON.stringify(next));
+      return next;
+    });
 
-  const canStart =
-    cleanName(p1) &&
-    cleanName(p2) &&
-    cleanName(p3) &&
-    cleanName(p4) &&
-    !hasDuplicates;
-
-  function setsSummary(value: number) {
-    if (value === 1) return "1 set";
-    if (value === 3) return "Best of 3 sets";
-    return "Best of 5 sets";
+    setNewPlayerName("");
   }
 
   function startMatch() {
-    if (!canStart) return;
+    const names = selected.map(normalizeName).filter(Boolean);
+    if (names.length !== 4) {
+      setError("Please select 4 players.");
+      return;
+    }
+    if (new Set(names).size !== 4) {
+      setError("Players must be unique.");
+      return;
+    }
 
-    const matchData = {
-      players: [cleanName(p1), cleanName(p2), cleanName(p3), cleanName(p4)],
+    const payload: MatchPayload = {
+      players: names,
       mode: "standard",
       sets,
       rules: {
@@ -87,247 +109,215 @@ export default function StandardMatchSetupPage() {
       },
     };
 
-    const encoded = encodeURIComponent(JSON.stringify(matchData));
-    router.push(`/match?data=${encoded}`);
+    localStorage.setItem(STORAGE_MATCH_KEY, JSON.stringify(payload));
+    router.push("/match");
   }
 
-  const cardStyle: React.CSSProperties = {
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    borderRadius: 16,
-    padding: 16,
-    marginTop: 16,
+  const styles: Record<string, React.CSSProperties> = {
+    page: {
+      minHeight: "100vh",
+      background: NAVY,
+      color: WHITE,
+      padding: 16,
+      display: "flex",
+      justifyContent: "center",
+    },
+    card: {
+      width: "100%",
+      maxWidth: 520,
+      background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: 16,
+      padding: 16,
+      boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+    },
+    title: { fontSize: 22, fontWeight: 800, letterSpacing: 0.2, marginBottom: 4 },
+    subtitle: { opacity: 0.85, marginBottom: 16, fontSize: 13 },
+    sectionTitle: { fontWeight: 800, marginTop: 14, marginBottom: 10 },
+    row: { display: "flex", gap: 10, alignItems: "center" },
+    grid: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
+    select: {
+      width: "100%",
+      background: "rgba(255,255,255,0.08)",
+      color: WHITE,
+      border: "1px solid rgba(255,255,255,0.16)",
+      borderRadius: 12,
+      padding: "14px 12px",
+      fontSize: 16,
+      outline: "none",
+    },
+    input: {
+      width: "100%",
+      background: "rgba(255,255,255,0.08)",
+      color: WHITE,
+      border: "1px solid rgba(255,255,255,0.16)",
+      borderRadius: 12,
+      padding: "14px 12px",
+      fontSize: 16,
+      outline: "none",
+    },
+    button: {
+      width: "100%",
+      background: TEAL,
+      color: NAVY,
+      border: "none",
+      borderRadius: 14,
+      padding: "16px 14px",
+      fontSize: 18,
+      fontWeight: 900,
+      cursor: "pointer",
+      boxShadow: "0 10px 18px rgba(0,168,168,0.18)",
+    },
+    buttonSecondary: {
+      background: "rgba(255,255,255,0.10)",
+      color: WHITE,
+      border: "1px solid rgba(255,255,255,0.16)",
+      borderRadius: 12,
+      padding: "14px 12px",
+      fontSize: 16,
+      fontWeight: 800,
+      cursor: "pointer",
+      minWidth: 120,
+      whiteSpace: "nowrap",
+    },
+    pillRow: { display: "flex", gap: 10, flexWrap: "wrap" },
+    pill: (active: boolean): React.CSSProperties => ({
+      padding: "12px 12px",
+      borderRadius: 999,
+      border: active ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.18)",
+      background: active ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.08)",
+      color: WHITE,
+      fontWeight: 900,
+      cursor: "pointer",
+      userSelect: "none",
+      minWidth: 110,
+      textAlign: "center",
+    }),
+    toggle: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      background: "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.14)",
+      borderRadius: 14,
+      padding: 12,
+    },
+    small: { fontSize: 12, opacity: 0.85, marginTop: 4 },
+    error: {
+      marginTop: 12,
+      background: "rgba(255,64,64,0.12)",
+      border: "1px solid rgba(255,64,64,0.30)",
+      color: WHITE,
+      padding: 10,
+      borderRadius: 12,
+      fontWeight: 800,
+    },
+    divider: { height: 1, background: "rgba(255,255,255,0.10)", margin: "14px 0" },
   };
-
-  const labelStyle: React.CSSProperties = {
-    fontWeight: 900,
-    marginBottom: 10,
-  };
-
-  const selectStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "12px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.06)",
-    color: WHITE,
-    fontSize: 16,
-    outline: "none",
-  };
-
-  const rowStyle: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 12,
-    marginTop: 12,
-  };
-
-  const toggleRow: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "14px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.05)",
-    marginTop: 12,
-  };
-
-  const chipBtn = (active: boolean): React.CSSProperties => ({
-    padding: "10px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: active ? "rgba(0,168,168,0.25)" : "rgba(255,255,255,0.06)",
-    color: WHITE,
-    cursor: "pointer",
-    fontWeight: 800,
-    minWidth: 110,
-  });
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: NAVY,
-        color: WHITE,
-        fontFamily: "Arial",
-        padding: 20,
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
-      <div style={{ width: "100%", maxWidth: 560 }}>
-        <Link href="/" style={{ color: WHITE, textDecoration: "none" }}>
-          ← Home
-        </Link>
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <div style={styles.title}>Standard Match Setup</div>
+        <div style={styles.subtitle}>Pick 4 players, pick sets, then start scoring.</div>
 
-        <h1 style={{ fontSize: "2.0rem", fontWeight: 900, marginTop: 14 }}>
-          Standard Match Setup
-        </h1>
-
-        <div style={{ opacity: 0.75, marginTop: 8 }}>
-          Select four players, choose rules, then start
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={labelStyle}>Players</div>
-            <button
-              type="button"
-              onClick={addPlayer}
-              style={{
-                background: "transparent",
-                color: TEAL,
-                border: "none",
-                fontWeight: 900,
-                cursor: "pointer",
-                fontSize: 16,
-              }}
-            >
-              Add player
-            </button>
-          </div>
-
-          <div style={rowStyle}>
-            <select value={p1} onChange={(e) => setP1(e.target.value)} style={selectStyle}>
-              <option value="" style={{ background: NAVY, color: WHITE }}>
-                Select player
-              </option>
-              {playerPool.map((name) => (
-                <option key={`p1_${name}`} value={name} style={{ background: NAVY, color: WHITE }}>
-                  {name}
-                </option>
-              ))}
-            </select>
-
-            <select value={p2} onChange={(e) => setP2(e.target.value)} style={selectStyle}>
-              <option value="" style={{ background: NAVY, color: WHITE }}>
-                Select player
-              </option>
-              {playerPool.map((name) => (
-                <option key={`p2_${name}`} value={name} style={{ background: NAVY, color: WHITE }}>
-                  {name}
-                </option>
-              ))}
-            </select>
-
-            <select value={p3} onChange={(e) => setP3(e.target.value)} style={selectStyle}>
-              <option value="" style={{ background: NAVY, color: WHITE }}>
-                Select player
-              </option>
-              {playerPool.map((name) => (
-                <option key={`p3_${name}`} value={name} style={{ background: NAVY, color: WHITE }}>
-                  {name}
-                </option>
-              ))}
-            </select>
-
-            <select value={p4} onChange={(e) => setP4(e.target.value)} style={selectStyle}>
-              <option value="" style={{ background: NAVY, color: WHITE }}>
-                Select player
-              </option>
-              {playerPool.map((name) => (
-                <option key={`p4_${name}`} value={name} style={{ background: NAVY, color: WHITE }}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ marginTop: 10, opacity: 0.8, fontSize: 13 }}>
-            Player pool size: {playerPool.length}
-          </div>
-
-          {hasDuplicates ? (
-            <div style={{ marginTop: 10, color: "#ffcc66", fontWeight: 800 }}>
-              Duplicate player selected, choose four different players
+        <div style={styles.sectionTitle}>Players</div>
+        <div style={styles.grid}>
+          {["Player 1", "Player 2", "Player 3", "Player 4"].map((label, i) => (
+            <div key={label}>
+              <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 6, fontWeight: 800 }}>{label}</div>
+              <select
+                style={styles.select}
+                value={selected[i]}
+                onChange={(e) => updateSelected(i, e.target.value)}
+              >
+                <option value="">Select player</option>
+                {savedPlayers.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : null}
+          ))}
         </div>
 
-        <div style={cardStyle}>
-          <div style={labelStyle}>Rules</div>
+        <div style={styles.divider} />
 
-          <div style={toggleRow}>
-            <div style={{ fontWeight: 900 }}>Golden point at deuce</div>
-            <button
-              type="button"
-              onClick={() => setGoldenPoint((v) => !v)}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 999,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: goldenPoint ? "rgba(0,168,168,0.25)" : "rgba(255,255,255,0.06)",
-                color: WHITE,
-                cursor: "pointer",
-                fontWeight: 900,
-                minWidth: 70,
-              }}
-            >
-              {goldenPoint ? "On" : "Off"}
-            </button>
-          </div>
-
-          <div style={toggleRow}>
-            <div style={{ fontWeight: 900 }}>Super tiebreak as final set</div>
-            <button
-              type="button"
-              onClick={() => setSuperTiebreakFinalSet((v) => !v)}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 999,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: superTiebreakFinalSet ? "rgba(0,168,168,0.25)" : "rgba(255,255,255,0.06)",
-                color: WHITE,
-                cursor: "pointer",
-                fontWeight: 900,
-                minWidth: 70,
-              }}
-            >
-              {superTiebreakFinalSet ? "On" : "Off"}
-            </button>
-          </div>
-
-          <div style={{ marginTop: 16, fontWeight: 900 }}>Number of sets</div>
-
-          <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => setSets(1)} style={chipBtn(sets === 1)}>
-              1 set
-            </button>
-            <button type="button" onClick={() => setSets(3)} style={chipBtn(sets === 3)}>
-              Best of 3
-            </button>
-            <button type="button" onClick={() => setSets(5)} style={chipBtn(sets === 5)}>
-              Best of 5
-            </button>
-          </div>
-
-          <div style={{ marginTop: 12, opacity: 0.8, fontSize: 13 }}>
-            {setsSummary(sets)}, tiebreak at 6 all
-          </div>
-        </div>
-
-        <div style={{ marginTop: 18 }}>
-          <button
-            type="button"
-            onClick={startMatch}
-            disabled={!canStart}
-            style={{
-              width: "100%",
-              padding: "16px 18px",
-              borderRadius: 16,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: canStart ? TEAL : "rgba(255,255,255,0.10)",
-              color: WHITE,
-              fontWeight: 900,
-              fontSize: 18,
-              cursor: canStart ? "pointer" : "not-allowed",
+        <div style={styles.sectionTitle}>Add player</div>
+        <div style={styles.row}>
+          <input
+            style={styles.input}
+            value={newPlayerName}
+            placeholder="Type name"
+            onChange={(e) => setNewPlayerName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addPlayer();
             }}
-          >
-            Start Match
+          />
+          <button style={styles.buttonSecondary} onClick={addPlayer}>
+            Add
+          </button>
+        </div>
+        <div style={styles.small}>Saved locally on this device.</div>
+
+        <div style={styles.divider} />
+
+        <div style={styles.sectionTitle}>Number of sets</div>
+        <div style={styles.pillRow}>
+          <div style={styles.pill(sets === 1)} onClick={() => setSets(1)}>
+            1 set
+          </div>
+          <div style={styles.pill(sets === 3)} onClick={() => setSets(3)}>
+            Best of 3
+          </div>
+          <div style={styles.pill(sets === 5)} onClick={() => setSets(5)}>
+            Best of 5
+          </div>
+        </div>
+
+        <div style={styles.divider} />
+
+        <div style={styles.sectionTitle}>Rules</div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={styles.toggle}>
+            <div>
+              <div style={{ fontWeight: 900 }}>Golden point at deuce</div>
+              <div style={styles.small}>At 40 40, next point wins the game.</div>
+            </div>
+            <input
+              aria-label="Golden point"
+              type="checkbox"
+              checked={goldenPoint}
+              onChange={(e) => setGoldenPoint(e.target.checked)}
+              style={{ transform: "scale(1.3)" }}
+            />
+          </div>
+
+          <div style={styles.toggle}>
+            <div>
+              <div style={{ fontWeight: 900 }}>Super tiebreak as final set</div>
+              <div style={styles.small}>Final set becomes first to 10, win by 2.</div>
+            </div>
+            <input
+              aria-label="Super tiebreak final set"
+              type="checkbox"
+              checked={superTiebreakFinalSet}
+              onChange={(e) => setSuperTiebreakFinalSet(e.target.checked)}
+              style={{ transform: "scale(1.3)" }}
+            />
+          </div>
+        </div>
+
+        {error ? <div style={styles.error}>{error}</div> : null}
+
+        <div style={{ marginTop: 16 }}>
+          <button style={{ ...styles.button, opacity: canStart ? 1 : 0.45 }} onClick={startMatch} disabled={!canStart}>
+            Start match
           </button>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

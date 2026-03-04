@@ -1,490 +1,649 @@
 "use client";
 
-import { useSearchParams, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
-type SetRecord = {
-  gamesA: number;
-  gamesB: number;
-  tiebreakPlayed: boolean;
-  tbA: number;
-  tbB: number;
+const NAVY = "#0F1E2E";
+const WHITE = "#FFFFFF";
+const TEAL = "#00A8A8";
+
+type MatchRules = {
+  goldenPoint: boolean;
+  superTiebreakFinalSet: boolean;
 };
+
+type MatchPayload = {
+  players: string[];
+  mode: "standard";
+  sets: number;
+  rules: MatchRules;
+};
+
+const STORAGE_MATCH_KEY = "eps_match_payload";
+
+type Team = "A" | "B";
 
 type Snapshot = {
-  pointsA: number;
-  pointsB: number;
   gamesA: number;
   gamesB: number;
-  setsWonA: number;
-  setsWonB: number;
+  setsA: number;
+  setsB: number;
+  setIndex: number;
   isTiebreak: boolean;
+  tiebreakTarget: number;
   tbA: number;
   tbB: number;
-  serveEnabled: boolean;
-  serverTeam: "A" | "B" | null;
-  serverIndexInTeam: 0 | 1;
-  completedSets: SetRecord[];
+  pA: number;
+  pB: number;
+  adTeam: Team | null;
+  serverIndex: number;
+  tbPointNumber: number;
+  matchOver: boolean;
+  winner: Team | null;
 };
 
+function safeParseJSON<T>(value: string | null, fallback: T): T {
+  try {
+    if (!value) return fallback;
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function setsToWin(totalSets: number) {
+  return Math.ceil(totalSets / 2);
+}
+
+function isFinalSet(setIndex: number, totalSets: number) {
+  return setIndex === totalSets - 1;
+}
+
+function shouldUseSuperTiebreakFinalSet(payload: MatchPayload, setIndex: number) {
+  return payload.rules.superTiebreakFinalSet && isFinalSet(setIndex, payload.sets);
+}
+
+function tiebreakWinner(tbA: number, tbB: number, target: number): Team | null {
+  if (tbA >= target || tbB >= target) {
+    if (Math.abs(tbA - tbB) >= 2) return tbA > tbB ? "A" : "B";
+  }
+  return null;
+}
+
+function normalSetWinner(gA: number, gB: number): Team | null {
+  if (gA >= 6 || gB >= 6) {
+    if (Math.abs(gA - gB) >= 2) return gA > gB ? "A" : "B";
+  }
+  return null;
+}
+
+function determineTiebreakServeTeam(startingServerIndex: number, tbPointNumber: number): Team {
+  // Tiebreak pattern:
+  // Point 1: starting server
+  // Points 2 and 3: other team
+  // Points 4 and 5: starting team
+  // then pairs repeat
+  if (tbPointNumber <= 0) return startingServerIndex % 2 === 0 ? "A" : "B";
+  if (tbPointNumber === 1) return startingServerIndex % 2 === 0 ? "A" : "B";
+
+  const block = tbPointNumber - 2; // starts at 0 for point 2
+  const pairIndex = Math.floor(block / 2); // 0,0,1,1,2,2...
+  const flips = 1 + pairIndex; // after point 1, flips every 2 points
+  const serverIdx = startingServerIndex + flips;
+  return serverIdx % 2 === 0 ? "A" : "B";
+}
+
 export default function MatchPage() {
-  const params = useSearchParams();
   const router = useRouter();
-  const data = params.get("data");
+  const payload = useMemo(() => {
+    const p = safeParseJSON<MatchPayload | null>(localStorage.getItem(STORAGE_MATCH_KEY), null);
+    return p;
+  }, []);
 
-  const match = useMemo(() => {
-    if (!data) {
-      return {
-        players: ["", "", "", ""],
-        sets: 3,
-        mode: "standard",
-      };
-    }
-    const parsed = JSON.parse(decodeURIComponent(data));
-    return {
-      players: (parsed.players ?? ["", "", "", ""]) as string[],
-      sets: (parsed.sets ?? 3) as number,
-      mode: (parsed.mode ?? "standard") as string,
-    };
-  }, [data]);
-
-  const teamA = [match.players[0] || "Player 1", match.players[1] || "Player 2"];
-  const teamB = [match.players[2] || "Player 3", match.players[3] || "Player 4"];
-
-  const scoreLabels = ["0", "15", "30", "40"];
-
-  const [pointsA, setPointsA] = useState(0);
-  const [pointsB, setPointsB] = useState(0);
-
-  const [gamesA, setGamesA] = useState(0);
-  const [gamesB, setGamesB] = useState(0);
-
-  const [setsWonA, setSetsWonA] = useState(0);
-  const [setsWonB, setSetsWonB] = useState(0);
-
-  const [isTiebreak, setIsTiebreak] = useState(false);
-  const [tbA, setTbA] = useState(0);
-  const [tbB, setTbB] = useState(0);
-
-  const [serveEnabled, setServeEnabled] = useState(false);
-  const [serverTeam, setServerTeam] = useState<"A" | "B" | null>(null);
-  const [serverIndexInTeam, setServerIndexInTeam] = useState<0 | 1>(0);
-
-  const [completedSets, setCompletedSets] = useState<SetRecord[]>([]);
   const [history, setHistory] = useState<Snapshot[]>([]);
 
-  function setsNeeded(totalSets: number) {
-    if (!totalSets || totalSets <= 1) return 1;
-    return Math.ceil(totalSets / 2);
+  const [state, setState] = useState<Snapshot>({
+    gamesA: 0,
+    gamesB: 0,
+    setsA: 0,
+    setsB: 0,
+    setIndex: 0,
+    isTiebreak: false,
+    tiebreakTarget: 7,
+    tbA: 0,
+    tbB: 0,
+    pA: 0,
+    pB: 0,
+    adTeam: null,
+    serverIndex: 0, // 0 -> Team A, 1 -> Team B
+    tbPointNumber: 0, // counts points within current tiebreak starting at 1
+    matchOver: false,
+    winner: null,
+  });
+
+  useEffect(() => {
+    if (!payload) router.push("/match/setup");
+  }, [payload, router]);
+
+  function pushHistory(prev: Snapshot) {
+    setHistory((h) => [...h, prev]);
   }
 
-  function displayScore(points: number) {
-    if (points === 4) return "Ad";
-    return scoreLabels[points] ?? "0";
+  function resetAll() {
+    setHistory([]);
+    setState((s) => ({
+      ...s,
+      gamesA: 0,
+      gamesB: 0,
+      setsA: 0,
+      setsB: 0,
+      setIndex: 0,
+      isTiebreak: false,
+      tiebreakTarget: 7,
+      tbA: 0,
+      tbB: 0,
+      pA: 0,
+      pB: 0,
+      adTeam: null,
+      serverIndex: 0,
+      tbPointNumber: 0,
+      matchOver: false,
+      winner: null,
+    }));
   }
 
-  function saveState() {
-    setHistory((prev: Snapshot[]) => [
-      ...prev,
-      {
-        pointsA,
-        pointsB,
-        gamesA,
-        gamesB,
-        setsWonA,
-        setsWonB,
-        isTiebreak,
-        tbA,
-        tbB,
-        serveEnabled,
-        serverTeam,
-        serverIndexInTeam,
-        completedSets: [...completedSets],
-      },
-    ]);
+  function newMatch() {
+    router.push("/match/setup");
   }
 
   function undo() {
-    setHistory((prev: Snapshot[]) => {
-      if (prev.length === 0) return prev;
-
-      const previous = prev[prev.length - 1];
-
-      setPointsA(previous.pointsA);
-      setPointsB(previous.pointsB);
-      setGamesA(previous.gamesA);
-      setGamesB(previous.gamesB);
-      setSetsWonA(previous.setsWonA);
-      setSetsWonB(previous.setsWonB);
-
-      setIsTiebreak(previous.isTiebreak);
-      setTbA(previous.tbA);
-      setTbB(previous.tbB);
-
-      setServeEnabled(previous.serveEnabled);
-      setServerTeam(previous.serverTeam);
-      setServerIndexInTeam(previous.serverIndexInTeam);
-
-      setCompletedSets(previous.completedSets);
-
-      return prev.slice(0, prev.length - 1);
+    setHistory((h) => {
+      if (h.length === 0) return h;
+      const prev = h[h.length - 1];
+      setState(prev);
+      return h.slice(0, -1);
     });
   }
 
-  function resetGamePoints() {
-    setPointsA(0);
-    setPointsB(0);
+  function randomFirstServer() {
+    setState((prev) => {
+      pushHistory(prev);
+      return { ...prev, serverIndex: Math.random() < 0.5 ? 0 : 1 };
+    });
   }
 
-  function advanceServerAfterGame() {
-    if (!serveEnabled) return;
-    if (!serverTeam) return;
-    if (isTiebreak) return;
+  function toggleServeHelper() {
+    setShowServeHelper((v) => !v);
+  }
 
-    if (serverTeam === "A") {
-      setServerTeam("B");
-      setServerIndexInTeam((idx) => (idx === 0 ? 1 : 0));
-      return;
+  const [showServeHelper, setShowServeHelper] = useState<boolean>(true);
+
+  const teamAPlayers = useMemo(() => {
+    if (!payload) return ["Team A", ""];
+    return [payload.players[0] ?? "A1", payload.players[1] ?? "A2"];
+  }, [payload]);
+
+  const teamBPlayers = useMemo(() => {
+    if (!payload) return ["Team B", ""];
+    return [payload.players[2] ?? "B1", payload.players[3] ?? "B2"];
+  }, [payload]);
+
+  const targetSetsToWin = useMemo(() => (payload ? setsToWin(payload.sets) : 1), [payload]);
+
+  const inSuperFinalSet = useMemo(() => {
+    if (!payload) return false;
+    return shouldUseSuperTiebreakFinalSet(payload, state.setIndex);
+  }, [payload, state.setIndex]);
+
+  const scoreDisplay = useMemo(() => {
+    // If tiebreak, show numeric
+    if (state.isTiebreak) return { a: String(state.tbA), b: String(state.tbB) };
+
+    // Normal point display
+    const map = ["0", "15", "30", "40"];
+    const baseA = map[clamp(state.pA, 0, 3)];
+    const baseB = map[clamp(state.pB, 0, 3)];
+
+    // Deuce and advantage logic
+    if (state.pA >= 3 && state.pB >= 3) {
+      if (payload?.rules.goldenPoint) {
+        return { a: "40", b: "40" };
+      }
+      if (state.adTeam === "A") return { a: "AD", b: "40" };
+      if (state.adTeam === "B") return { a: "40", b: "AD" };
+      return { a: "40", b: "40" };
     }
 
-    setServerTeam("A");
-    setServerIndexInTeam((idx) => (idx === 0 ? 1 : 0));
+    return { a: baseA, b: baseB };
+  }, [payload, state.adTeam, state.isTiebreak, state.pA, state.pB, state.tbA, state.tbB]);
+
+  const currentServerTeam: Team = useMemo(() => {
+    if (!state.isTiebreak) return state.serverIndex % 2 === 0 ? "A" : "B";
+
+    // During tiebreak use the special serve pattern.
+    // startingServerIndex is the serverIndex at the moment tiebreak started.
+    // We keep using state.serverIndex as that starting index, and tbPointNumber as point count.
+    return determineTiebreakServeTeam(state.serverIndex, state.tbPointNumber);
+  }, [state.isTiebreak, state.serverIndex, state.tbPointNumber]);
+
+  function checkMatchWinner(next: Snapshot): Snapshot {
+    if (!payload) return next;
+    const needed = setsToWin(payload.sets);
+    if (next.setsA >= needed) return { ...next, matchOver: true, winner: "A" };
+    if (next.setsB >= needed) return { ...next, matchOver: true, winner: "B" };
+    return next;
   }
 
-  function maybeStartTiebreak(nextGamesA: number, nextGamesB: number) {
-    if (nextGamesA === 6 && nextGamesB === 6) {
-      setIsTiebreak(true);
-      setTbA(0);
-      setTbB(0);
-      resetGamePoints();
-      return true;
-    }
-    return false;
-  }
-
-  function recordSet(gA: number, gB: number, tbPlayed: boolean, tA: number, tB: number) {
-    setCompletedSets((prev: SetRecord[]) => [
+  function startTiebreak(prev: Snapshot, target: number): Snapshot {
+    // Keep serverIndex as the starting server index for the tiebreak pattern.
+    return {
       ...prev,
-      {
-        gamesA: gA,
-        gamesB: gB,
-        tiebreakPlayed: tbPlayed,
-        tbA: tA,
-        tbB: tB,
-      },
-    ]);
+      isTiebreak: true,
+      tiebreakTarget: target,
+      tbA: 0,
+      tbB: 0,
+      tbPointNumber: 0,
+      pA: 0,
+      pB: 0,
+      adTeam: null,
+    };
   }
 
-  function fullResetMatch() {
-    setPointsA(0);
-    setPointsB(0);
-    setGamesA(0);
-    setGamesB(0);
-    setSetsWonA(0);
-    setSetsWonB(0);
-    setIsTiebreak(false);
-    setTbA(0);
-    setTbB(0);
+  function winGame(prev: Snapshot, winner: Team): Snapshot {
+    let next: Snapshot = { ...prev };
 
-    setServeEnabled(false);
-    setServerTeam(null);
-    setServerIndexInTeam(0);
+    // increment games
+    if (winner === "A") next.gamesA += 1;
+    else next.gamesB += 1;
 
-    setCompletedSets([]);
+    // reset points
+    next.pA = 0;
+    next.pB = 0;
+    next.adTeam = null;
+
+    // rotate server for next game (normal games only)
+    next.serverIndex += 1;
+
+    // If we are in a normal set, check set win or tiebreak trigger
+    const setWin = normalSetWinner(next.gamesA, next.gamesB);
+    if (setWin) {
+      if (setWin === "A") next.setsA += 1;
+      else next.setsB += 1;
+
+      next.gamesA = 0;
+      next.gamesB = 0;
+      next.isTiebreak = false;
+      next.tbA = 0;
+      next.tbB = 0;
+      next.tbPointNumber = 0;
+
+      // advance set index
+      next.setIndex += 1;
+
+      // If match ends, do not go into a new set
+      next = checkMatchWinner(next);
+
+      // If next set is super tiebreak final set, start it immediately
+      if (!next.matchOver && payload && shouldUseSuperTiebreakFinalSet(payload, next.setIndex)) {
+        // For super tiebreak, we do not play games at all, just a 10 point tiebreak as the set
+        next.gamesA = 0;
+        next.gamesB = 0;
+        next = startTiebreak(next, 10);
+      }
+
+      return next;
+    }
+
+    // Trigger normal tiebreak at 6 6 (only when not super final set)
+    if (payload && !inSuperFinalSet && next.gamesA === 6 && next.gamesB === 6) {
+      next = startTiebreak(next, 7);
+    }
+
+    return next;
+  }
+
+  function winTiebreakAsSet(prev: Snapshot, winner: Team): Snapshot {
+    let next: Snapshot = { ...prev };
+
+    // award the set
+    if (winner === "A") next.setsA += 1;
+    else next.setsB += 1;
+
+    // reset set state
+    next.gamesA = 0;
+    next.gamesB = 0;
+    next.isTiebreak = false;
+    next.tbA = 0;
+    next.tbB = 0;
+    next.tbPointNumber = 0;
+    next.pA = 0;
+    next.pB = 0;
+    next.adTeam = null;
+
+    // move to next set
+    next.setIndex += 1;
+
+    // match winner check
+    next = checkMatchWinner(next);
+
+    // if next set exists and is super final set, start it
+    if (!next.matchOver && payload && shouldUseSuperTiebreakFinalSet(payload, next.setIndex)) {
+      next = startTiebreak(next, 10);
+    }
+
+    return next;
+  }
+
+  function addPoint(team: Team) {
+    if (!payload) return;
+    setState((prev) => {
+      if (prev.matchOver) return prev;
+
+      pushHistory(prev);
+
+      // Super tiebreak final set is handled as a tiebreak with target 10.
+      // Normal tiebreak at 6 6 uses target 7.
+      if (prev.isTiebreak) {
+        let next: Snapshot = { ...prev };
+        if (team === "A") next.tbA += 1;
+        else next.tbB += 1;
+
+        next.tbPointNumber = prev.tbPointNumber + 1;
+
+        const tbWin = tiebreakWinner(next.tbA, next.tbB, next.tiebreakTarget);
+        if (tbWin) {
+          next = winTiebreakAsSet(next, tbWin);
+        }
+        return next;
+      }
+
+      // Normal game scoring
+      const golden = payload.rules.goldenPoint;
+
+      // If both at least 40
+      if (prev.pA >= 3 && prev.pB >= 3) {
+        if (golden) {
+          // At 40 40, next point wins game.
+          return winGame(prev, team);
+        }
+
+        // Advantage mode
+        if (prev.adTeam === null) {
+          return { ...prev, adTeam: team };
+        }
+        if (prev.adTeam === team) {
+          return winGame(prev, team);
+        }
+        // Opponent cancels advantage back to deuce
+        return { ...prev, adTeam: null };
+      }
+
+      // Standard points under deuce threshold
+      let next: Snapshot = { ...prev };
+      if (team === "A") next.pA += 1;
+      else next.pB += 1;
+
+      // Check game win: 4 points with 2 lead
+      const lead = next.pA - next.pB;
+      if (next.pA >= 4 || next.pB >= 4) {
+        if (Math.abs(lead) >= 2) {
+          return winGame(prev, lead > 0 ? "A" : "B");
+        }
+      }
+
+      // If one reaches 4 while other < 3, game ends
+      if (next.pA >= 4 && next.pB <= 2) return winGame(prev, "A");
+      if (next.pB >= 4 && next.pA <= 2) return winGame(prev, "B");
+
+      return next;
+    });
+  }
+
+  function resetMatch() {
+    setState((prev) => {
+      pushHistory(prev);
+      // Keep serverIndex as is, because on court you might want to keep it.
+      return {
+        ...prev,
+        gamesA: 0,
+        gamesB: 0,
+        setsA: 0,
+        setsB: 0,
+        setIndex: 0,
+        isTiebreak: false,
+        tiebreakTarget: 7,
+        tbA: 0,
+        tbB: 0,
+        pA: 0,
+        pB: 0,
+        adTeam: null,
+        tbPointNumber: 0,
+        matchOver: false,
+        winner: null,
+      };
+    });
     setHistory([]);
   }
 
-  function awardSetToA(finalGamesA: number, finalGamesB: number, tbPlayed: boolean, finalTbA: number, finalTbB: number) {
-    recordSet(finalGamesA, finalGamesB, tbPlayed, finalTbA, finalTbB);
-    setSetsWonA((v) => v + 1);
-    setGamesA(0);
-    setGamesB(0);
-    setIsTiebreak(false);
-    setTbA(0);
-    setTbB(0);
-    resetGamePoints();
-  }
-
-  function awardSetToB(finalGamesA: number, finalGamesB: number, tbPlayed: boolean, finalTbA: number, finalTbB: number) {
-    recordSet(finalGamesA, finalGamesB, tbPlayed, finalTbA, finalTbB);
-    setSetsWonB((v) => v + 1);
-    setGamesA(0);
-    setGamesB(0);
-    setIsTiebreak(false);
-    setTbA(0);
-    setTbB(0);
-    resetGamePoints();
-  }
-
-  function winGameA() {
-    const nextA = gamesA + 1;
-    const nextB = gamesB;
-
-    if (maybeStartTiebreak(nextA, nextB)) {
-      setGamesA(nextA);
-      return;
+  const headerTitle = useMemo(() => {
+    if (!payload) return "Match";
+    if (state.matchOver && state.winner) return state.winner === "A" ? "Team A wins" : "Team B wins";
+    if (state.isTiebreak) {
+      const label = state.tiebreakTarget === 10 ? "Super tiebreak" : "Tiebreak";
+      return `${label} set ${state.setIndex + 1}`;
     }
+    return `Set ${state.setIndex + 1}`;
+  }, [payload, state.isTiebreak, state.matchOver, state.setIndex, state.tiebreakTarget, state.winner]);
 
-    if (nextA >= 6 && nextA - nextB >= 2) {
-      awardSetToA(nextA, nextB, false, 0, 0);
-      advanceServerAfterGame();
-      return;
-    }
+  const styles: Record<string, React.CSSProperties> = {
+    page: {
+      minHeight: "100vh",
+      background: NAVY,
+      color: WHITE,
+      padding: 12,
+      display: "flex",
+      justifyContent: "center",
+    },
+    shell: {
+      width: "100%",
+      maxWidth: 760,
+      display: "grid",
+      gap: 12,
+    },
+    topBar: {
+      background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: 16,
+      padding: 12,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+    },
+    title: { fontWeight: 950, fontSize: 18, letterSpacing: 0.2 },
+    mini: { fontSize: 12, opacity: 0.85, marginTop: 2 },
+    chip: (active: boolean): React.CSSProperties => ({
+      padding: "10px 12px",
+      borderRadius: 999,
+      border: active ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.16)",
+      background: active ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.08)",
+      color: WHITE,
+      fontWeight: 900,
+      cursor: "pointer",
+      userSelect: "none",
+      fontSize: 13,
+      whiteSpace: "nowrap",
+    }),
+    board: {
+      background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: 18,
+      padding: 12,
+    },
+    boardGrid: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 10,
+    },
+    teamCard: (serving: boolean): React.CSSProperties => ({
+      borderRadius: 16,
+      padding: 12,
+      background: serving ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.06)",
+      border: serving ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.12)",
+    }),
+    teamName: { fontWeight: 950, fontSize: 16, marginBottom: 4 },
+    players: { opacity: 0.85, fontSize: 12, lineHeight: 1.3 },
+    scoreRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr 1fr",
+      gap: 8,
+      marginTop: 10,
+      alignItems: "end",
+    },
+    scoreBox: {
+      borderRadius: 14,
+      padding: 10,
+      background: "rgba(0,0,0,0.22)",
+      border: "1px solid rgba(255,255,255,0.10)",
+      textAlign: "center",
+    },
+    label: { fontSize: 11, opacity: 0.85, fontWeight: 800 },
+    big: { fontSize: 34, fontWeight: 1000, letterSpacing: 0.5, marginTop: 2 },
+    mid: { fontSize: 20, fontWeight: 950, marginTop: 2 },
+    controls: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 10,
+    },
+    btn: {
+      borderRadius: 16,
+      border: "none",
+      padding: "16px 14px",
+      fontSize: 18,
+      fontWeight: 1000,
+      cursor: "pointer",
+    },
+    btnA: { background: TEAL, color: NAVY },
+    btnB: { background: "rgba(255,255,255,0.10)", color: WHITE, border: "1px solid rgba(255,255,255,0.18)" },
+    actionRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 },
+    smallBtn: {
+      borderRadius: 14,
+      padding: "12px 10px",
+      fontSize: 14,
+      fontWeight: 900,
+      cursor: "pointer",
+      background: "rgba(255,255,255,0.08)",
+      color: WHITE,
+      border: "1px solid rgba(255,255,255,0.14)",
+    },
+  };
 
-    setGamesA(nextA);
-    resetGamePoints();
-    advanceServerAfterGame();
-  }
-
-  function winGameB() {
-    const nextA = gamesA;
-    const nextB = gamesB + 1;
-
-    if (maybeStartTiebreak(nextA, nextB)) {
-      setGamesB(nextB);
-      return;
-    }
-
-    if (nextB >= 6 && nextB - nextA >= 2) {
-      awardSetToB(nextA, nextB, false, 0, 0);
-      advanceServerAfterGame();
-      return;
-    }
-
-    setGamesB(nextB);
-    resetGamePoints();
-    advanceServerAfterGame();
-  }
-
-  function pointTeamA() {
-    saveState();
-
-    if (isTiebreak) {
-      const next = tbA + 1;
-      setTbA(next);
-
-      if (next >= 7 && next - tbB >= 2) {
-        awardSetToA(7, 6, true, next, tbB);
-      }
-      return;
-    }
-
-    if (pointsA >= 3 && pointsB < 3) {
-      winGameA();
-      return;
-    }
-
-    if (pointsA === 3 && pointsB === 3) {
-      setPointsA(4);
-      return;
-    }
-
-    if (pointsA === 4) {
-      winGameA();
-      return;
-    }
-
-    if (pointsB === 4) {
-      setPointsB(3);
-      return;
-    }
-
-    setPointsA(pointsA + 1);
-  }
-
-  function pointTeamB() {
-    saveState();
-
-    if (isTiebreak) {
-      const next = tbB + 1;
-      setTbB(next);
-
-      if (next >= 7 && next - tbA >= 2) {
-        awardSetToB(6, 7, true, tbA, next);
-      }
-      return;
-    }
-
-    if (pointsB >= 3 && pointsA < 3) {
-      winGameB();
-      return;
-    }
-
-    if (pointsA === 3 && pointsB === 3) {
-      setPointsB(4);
-      return;
-    }
-
-    if (pointsB === 4) {
-      winGameB();
-      return;
-    }
-
-    if (pointsA === 4) {
-      setPointsA(3);
-      return;
-    }
-
-    setPointsB(pointsB + 1);
-  }
-
-  function randomFirstServer() {
-    saveState();
-
-    const teamPick = Math.random() < 0.5 ? "A" : "B";
-    const indexPick = Math.random() < 0.5 ? 0 : 1;
-
-    setServeEnabled(true);
-    setServerTeam(teamPick);
-    setServerIndexInTeam(indexPick as 0 | 1);
-  }
-
-  const needed = setsNeeded(match.sets);
-  const winner =
-    setsWonA >= needed ? ("A" as const) : setsWonB >= needed ? ("B" as const) : null;
-
-  const matchWinnerText =
-    winner === "A" ? "Team A Wins!" : winner === "B" ? "Team B Wins!" : null;
-
-  const serverName = (() => {
-    if (!serveEnabled) return null;
-    if (!serverTeam) return "Select first server";
-    if (serverTeam === "A") return teamA[serverIndexInTeam];
-    return teamB[serverIndexInTeam];
-  })();
-
-  function finishMatch() {
-    if (!winner) return;
-
-    const payload = {
-      mode: match.mode,
-      setsConfigured: match.sets,
-      teamA,
-      teamB,
-      setsWonA,
-      setsWonB,
-      setHistory: completedSets,
-      winner,
-    };
-
-    const encoded = encodeURIComponent(JSON.stringify(payload));
-    router.push(`/results?data=${encoded}`);
-  }
-
-  function resetMatchConfirm() {
-    const ok = window.confirm("Reset this match? This will clear scores and history.");
-    if (!ok) return;
-    fullResetMatch();
-  }
-
-  function newMatchConfirm() {
-    const ok = window.confirm("Go back to Home and start a new match?");
-    if (!ok) return;
-    router.push("/");
-  }
+  if (!payload) return null;
 
   return (
-    <main style={{ textAlign: "center", padding: "40px" }}>
-      <h1>Match Score</h1>
+    <div style={styles.page}>
+      <div style={styles.shell}>
+        <div style={styles.topBar}>
+          <div>
+            <div style={styles.title}>{headerTitle}</div>
+            <div style={styles.mini}>
+              Sets {state.setsA} {state.setsB} , Games {state.gamesA} {state.gamesB}
+              {inSuperFinalSet && !state.matchOver ? " , Super tiebreak final set" : ""}
+            </div>
+          </div>
 
-      <p>{match.mode} match</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <div style={styles.chip(showServeHelper)} onClick={toggleServeHelper}>
+              Serve helper
+            </div>
+            <div style={styles.chip(false)} onClick={randomFirstServer}>
+              Random server
+            </div>
+          </div>
+        </div>
 
-      <h2>{teamA.join(" & ")}</h2>
-      <h2>vs</h2>
-      <h2>{teamB.join(" & ")}</h2>
+        <div style={styles.board}>
+          <div style={styles.boardGrid}>
+            <div style={styles.teamCard(showServeHelper && currentServerTeam === "A")}>
+              <div style={styles.teamName}>Team A</div>
+              <div style={styles.players}>
+                {teamAPlayers[0]}
+                <br />
+                {teamAPlayers[1]}
+              </div>
 
-      <div style={{ marginTop: "18px" }}>
-        <button onClick={newMatchConfirm} style={{ padding: "10px 16px", marginRight: "10px" }}>
-          New Match
-        </button>
+              <div style={styles.scoreRow}>
+                <div style={styles.scoreBox}>
+                  <div style={styles.label}>Sets</div>
+                  <div style={styles.mid}>{state.setsA}</div>
+                </div>
+                <div style={styles.scoreBox}>
+                  <div style={styles.label}>{state.isTiebreak ? "TB" : "Points"}</div>
+                  <div style={styles.big}>{scoreDisplay.a}</div>
+                </div>
+                <div style={styles.scoreBox}>
+                  <div style={styles.label}>Games</div>
+                  <div style={styles.mid}>{state.gamesA}</div>
+                </div>
+              </div>
+            </div>
 
-        <button onClick={resetMatchConfirm} style={{ padding: "10px 16px" }}>
-          Reset Match
-        </button>
-      </div>
+            <div style={styles.teamCard(showServeHelper && currentServerTeam === "B")}>
+              <div style={styles.teamName}>Team B</div>
+              <div style={styles.players}>
+                {teamBPlayers[0]}
+                <br />
+                {teamBPlayers[1]}
+              </div>
 
-      <div style={{ marginTop: "20px" }}>
-        <button
-          onClick={() => setServeEnabled((v) => !v)}
-          style={{ padding: "10px 18px", marginRight: "10px" }}
-        >
-          Serve Helper: {serveEnabled ? "On" : "Off"}
-        </button>
+              <div style={styles.scoreRow}>
+                <div style={styles.scoreBox}>
+                  <div style={styles.label}>Sets</div>
+                  <div style={styles.mid}>{state.setsB}</div>
+                </div>
+                <div style={styles.scoreBox}>
+                  <div style={styles.label}>{state.isTiebreak ? "TB" : "Points"}</div>
+                  <div style={styles.big}>{scoreDisplay.b}</div>
+                </div>
+                <div style={styles.scoreBox}>
+                  <div style={styles.label}>Games</div>
+                  <div style={styles.mid}>{state.gamesB}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
-        <button onClick={randomFirstServer} style={{ padding: "10px 18px" }}>
-          Random First Server
-        </button>
-
-        {serveEnabled && (
-          <p style={{ marginTop: "10px" }}>
-            Server: {serverName}
-            {isTiebreak ? " (tiebreak serving not tracked yet)" : ""}
-          </p>
-        )}
-      </div>
-
-      <h3 style={{ marginTop: "30px" }}>Sets</h3>
-      <p>
-        {setsWonA} , {setsWonB}
-      </p>
-
-      <h3>Games</h3>
-      <p style={{ fontSize: "26px" }}>
-        {gamesA} , {gamesB}
-      </p>
-
-      {!isTiebreak && (
-        <>
-          <h3>Points</h3>
-          <p style={{ fontSize: "32px" }}>
-            {displayScore(pointsA)} , {displayScore(pointsB)}
-          </p>
-        </>
-      )}
-
-      {isTiebreak && (
-        <>
-          <h3>Tiebreak</h3>
-          <p style={{ fontSize: "32px" }}>
-            {tbA} , {tbB}
-          </p>
-          <p style={{ marginTop: "6px" }}>First to 7, win by 2</p>
-        </>
-      )}
-
-      {matchWinnerText && <h2 style={{ color: "green" }}>{matchWinnerText}</h2>}
-
-      {!winner && (
-        <>
-          <button onClick={pointTeamA} style={{ margin: "10px", padding: "15px 25px" }}>
+        <div style={styles.controls}>
+          <button style={{ ...styles.btn, ...styles.btnA }} onClick={() => addPoint("A")}>
             Point Team A
           </button>
-
-          <button onClick={pointTeamB} style={{ margin: "10px", padding: "15px 25px" }}>
+          <button style={{ ...styles.btn, ...styles.btnB }} onClick={() => addPoint("B")}>
             Point Team B
           </button>
-        </>
-      )}
+        </div>
 
-      <div style={{ marginTop: "30px" }}>
-        <button
-          onClick={undo}
-          style={{ padding: "10px 20px", background: "#444", color: "white" }}
-        >
-          Undo Last Point
-        </button>
-      </div>
-
-      {winner && (
-        <div style={{ marginTop: "24px" }}>
-          <button
-            onClick={finishMatch}
-            style={{ padding: "14px 22px", fontSize: "18px" }}
-          >
-            Finish Match
+        <div style={styles.actionRow}>
+          <button style={styles.smallBtn} onClick={undo} disabled={history.length === 0}>
+            Undo
+          </button>
+          <button style={styles.smallBtn} onClick={resetMatch}>
+            Reset
+          </button>
+          <button style={styles.smallBtn} onClick={newMatch}>
+            New match
           </button>
         </div>
-      )}
-    </main>
+
+        <div style={{ opacity: 0.85, fontSize: 12, textAlign: "center", paddingBottom: 8 }}>
+          First to {targetSetsToWin} sets wins. {payload.rules.goldenPoint ? "Golden point enabled." : "Advantage enabled."}{" "}
+          {payload.rules.superTiebreakFinalSet ? "Final set may be a super tiebreak." : ""}
+        </div>
+      </div>
+    </div>
   );
 }
