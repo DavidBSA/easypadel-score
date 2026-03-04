@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 const NAVY = "#0F1E2E";
@@ -8,14 +8,13 @@ const TEAL = "#00A8A8";
 const WHITE = "#FFFFFF";
 
 type Team = "A" | "B";
-
 type EventType = "point_a" | "point_b" | "undo" | "end";
 
 type Rules = {
-  bestOfSets: 3; // fixed for now
-  goldenPoint: boolean; // at deuce, next point wins game
-  tiebreakAtSixAll: boolean; // standard tennis/padel
-  superTiebreakFinalSet: boolean; // not used yet, placeholder
+  bestOfSets: 3;
+  goldenPoint: boolean;
+  tiebreakAtSixAll: boolean;
+  superTiebreakFinalSet: boolean; // placeholder for later
 };
 
 type State = {
@@ -29,6 +28,13 @@ type State = {
   note: string;
 };
 
+type Players = {
+  a1: string;
+  a2: string;
+  b1: string;
+  b2: string;
+};
+
 const DEFAULT_RULES: Rules = {
   bestOfSets: 3,
   goldenPoint: false,
@@ -36,8 +42,13 @@ const DEFAULT_RULES: Rules = {
   superTiebreakFinalSet: false,
 };
 
+const PLAYERS_KEY = "eps_players_v1";
+
+function safeTrim(s: string) {
+  return s.replace(/\s+/g, " ").trim();
+}
+
 function pointsLabel(pointsA: number, pointsB: number, rules: Rules) {
-  // deuce/adv logic
   if (pointsA >= 3 && pointsB >= 3) {
     if (pointsA === pointsB) return { a: "40", b: "40", note: "Deuce" };
 
@@ -59,15 +70,10 @@ function pointsLabel(pointsA: number, pointsB: number, rules: Rules) {
 }
 
 function isGameOver(pointsA: number, pointsB: number, rules: Rules) {
-  // Golden point: at deuce (3-3 or later), next point wins
   if (rules.goldenPoint && pointsA >= 3 && pointsB >= 3) {
-    return pointsA !== pointsB; // first to lead after deuce
+    return pointsA !== pointsB;
   }
-
-  // Standard: win by 2 after at least 4 points
-  if (pointsA >= 4 || pointsB >= 4) {
-    return Math.abs(pointsA - pointsB) >= 2;
-  }
+  if (pointsA >= 4 || pointsB >= 4) return Math.abs(pointsA - pointsB) >= 2;
   return false;
 }
 
@@ -76,8 +82,6 @@ function gameWinner(pointsA: number, pointsB: number): Team {
 }
 
 function isSetOver(gamesA: number, gamesB: number, rules: Rules) {
-  // Tiebreak at 6-6 means set ends at 7-6 after tiebreak (we implement as a game for now)
-  // For now: normal set end, 6 with 2 game lead, OR 7-6 if tiebreak happened.
   const maxG = Math.max(gamesA, gamesB);
   const diff = Math.abs(gamesA - gamesB);
 
@@ -95,7 +99,6 @@ function setWinner(gamesA: number, gamesB: number): Team {
 }
 
 function targetSets(rules: Rules) {
-  // bestOf3 -> first to 2
   return 2;
 }
 
@@ -104,7 +107,6 @@ function isTiebreakMode(gamesA: number, gamesB: number, rules: Rules) {
 }
 
 function computeState(events: EventType[], rules: Rules): State {
-  // Apply undo by removing last point event
   const stack: EventType[] = [];
   for (const e of events) {
     if (e === "undo") {
@@ -141,20 +143,18 @@ function computeState(events: EventType[], rules: Rules): State {
     if (e === "point_b") pointsB += 1;
 
     if (inTiebreak) {
-      // Tiebreak rules: first to 7, win by 2
       const maxP = Math.max(pointsA, pointsB);
       const diff = Math.abs(pointsA - pointsB);
       const tbOver = maxP >= 7 && diff >= 2;
 
       if (tbOver) {
-        const w = gameWinner(pointsA, pointsB); // winner of tiebreak "game"
+        const w = gameWinner(pointsA, pointsB);
         if (w === "A") gamesA = 7;
         else gamesB = 7;
 
         pointsA = 0;
         pointsB = 0;
 
-        // set ends at 7-6
         const sw = setWinner(gamesA, gamesB);
         if (sw === "A") setsA += 1;
         else setsB += 1;
@@ -167,6 +167,8 @@ function computeState(events: EventType[], rules: Rules): State {
           note = "Match finished";
           break;
         }
+      } else {
+        note = "Tiebreak";
       }
 
       continue;
@@ -197,17 +199,49 @@ function computeState(events: EventType[], rules: Rules): State {
     }
   }
 
-  if (!finished) {
-    const inTiebreak = isTiebreakMode(gamesA, gamesB, rules);
-    if (inTiebreak) note = "Tiebreak";
-  }
+  if (!finished && isTiebreakMode(gamesA, gamesB, rules)) note = "Tiebreak";
 
   return { setsA, setsB, gamesA, gamesB, pointsA, pointsB, finished, note };
+}
+
+function loadPlayers(): Players {
+  if (typeof window === "undefined") {
+    return { a1: "", a2: "", b1: "", b2: "" };
+  }
+  try {
+    const raw = localStorage.getItem(PLAYERS_KEY);
+    if (!raw) return { a1: "", a2: "", b1: "", b2: "" };
+    const parsed = JSON.parse(raw) as Partial<Players>;
+    return {
+      a1: parsed.a1 || "",
+      a2: parsed.a2 || "",
+      b1: parsed.b1 || "",
+      b2: parsed.b2 || "",
+    };
+  } catch {
+    return { a1: "", a2: "", b1: "", b2: "" };
+  }
+}
+
+function savePlayers(p: Players) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(PLAYERS_KEY, JSON.stringify(p));
 }
 
 export default function MatchPage() {
   const [events, setEvents] = useState<EventType[]>([]);
   const [rules] = useState<Rules>(DEFAULT_RULES);
+
+  const [players, setPlayers] = useState<Players>(() => ({
+    a1: "",
+    a2: "",
+    b1: "",
+    b2: "",
+  }));
+
+  useEffect(() => {
+    setPlayers(loadPlayers());
+  }, []);
 
   const state = useMemo(() => computeState(events, rules), [events, rules]);
   const pointView = useMemo(
@@ -224,9 +258,25 @@ export default function MatchPage() {
     setEvents((prev) => [...prev, "undo"]);
   }
 
-  function reset() {
+  function resetScore() {
     setEvents([]);
   }
+
+  function updatePlayer(key: keyof Players, value: string) {
+    const next = { ...players, [key]: value };
+    setPlayers(next);
+    savePlayers(next);
+  }
+
+  const teamALabel =
+    safeTrim(`${players.a1} & ${players.a2}`) === "&"
+      ? "Team A"
+      : safeTrim(`${players.a1 || "Player 1"} & ${players.a2 || "Player 2"}`);
+
+  const teamBLabel =
+    safeTrim(`${players.b1} & ${players.b2}`) === "&"
+      ? "Team B"
+      : safeTrim(`${players.b1 || "Player 1"} & ${players.b2 || "Player 2"}`);
 
   return (
     <main
@@ -240,7 +290,7 @@ export default function MatchPage() {
         justifyContent: "center",
       }}
     >
-      <div style={{ width: "100%", maxWidth: "420px" }}>
+      <div style={{ width: "100%", maxWidth: "460px" }}>
         <div style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between" }}>
           <Link href="/" style={{ color: WHITE }}>
             ← Home
@@ -248,7 +298,73 @@ export default function MatchPage() {
           <div style={{ opacity: 0.75, fontSize: 12 }}>Standard match</div>
         </div>
 
-        <h1 style={{ fontSize: "1.8rem", marginBottom: "12px" }}>Live Match</h1>
+        <h1 style={{ fontSize: "1.8rem", marginBottom: "10px" }}>Live Match</h1>
+
+        <div
+          style={{
+            background: "rgba(255,255,255,0.06)",
+            borderRadius: "16px",
+            padding: "14px",
+            marginBottom: "12px",
+          }}
+        >
+          <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 10 }}>Players (saved for next time)</div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <input
+              value={players.a1}
+              onChange={(e) => updatePlayer("a1", e.target.value)}
+              placeholder="Team A, Player 1"
+              style={{
+                padding: "12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.04)",
+                color: WHITE,
+                outline: "none",
+              }}
+            />
+            <input
+              value={players.a2}
+              onChange={(e) => updatePlayer("a2", e.target.value)}
+              placeholder="Team A, Player 2"
+              style={{
+                padding: "12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.04)",
+                color: WHITE,
+                outline: "none",
+              }}
+            />
+            <input
+              value={players.b1}
+              onChange={(e) => updatePlayer("b1", e.target.value)}
+              placeholder="Team B, Player 1"
+              style={{
+                padding: "12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.04)",
+                color: WHITE,
+                outline: "none",
+              }}
+            />
+            <input
+              value={players.b2}
+              onChange={(e) => updatePlayer("b2", e.target.value)}
+              placeholder="Team B, Player 2"
+              style={{
+                padding: "12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.04)",
+                color: WHITE,
+                outline: "none",
+              }}
+            />
+          </div>
+        </div>
 
         <div
           style={{
@@ -258,9 +374,9 @@ export default function MatchPage() {
             marginBottom: "12px",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", opacity: 0.85 }}>
-            <div style={{ fontSize: 13 }}>Team A</div>
-            <div style={{ fontSize: 13 }}>Team B</div>
+          <div style={{ display: "flex", justifyContent: "space-between", opacity: 0.9 }}>
+            <div style={{ fontSize: 13 }}>{teamALabel}</div>
+            <div style={{ fontSize: 13 }}>{teamBLabel}</div>
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
@@ -341,7 +457,7 @@ export default function MatchPage() {
           </button>
 
           <button
-            onClick={reset}
+            onClick={resetScore}
             style={{
               padding: "16px",
               borderRadius: "14px",
