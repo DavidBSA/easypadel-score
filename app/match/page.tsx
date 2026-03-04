@@ -35,14 +35,15 @@ type Players = {
   b2: string;
 };
 
+const PLAYERS_KEY = "eps_players_v1";
+const RULES_KEY = "eps_match_rules_v1";
+
 const DEFAULT_RULES: Rules = {
   bestOfSets: 3,
   goldenPoint: false,
   tiebreakAtSixAll: true,
   superTiebreakFinalSet: false,
 };
-
-const PLAYERS_KEY = "eps_players_v1";
 
 function cleanName(s: string) {
   return s.replace(/\s+/g, " ").trim();
@@ -62,6 +63,23 @@ function loadPlayers(): Players {
     };
   } catch {
     return { a1: "", a2: "", b1: "", b2: "" };
+  }
+}
+
+function loadRules(): Rules {
+  if (typeof window === "undefined") return DEFAULT_RULES;
+  try {
+    const raw = localStorage.getItem(RULES_KEY);
+    if (!raw) return DEFAULT_RULES;
+    const parsed = JSON.parse(raw) as Partial<Rules>;
+    return {
+      bestOfSets: 3,
+      goldenPoint: !!parsed.goldenPoint,
+      tiebreakAtSixAll: true,
+      superTiebreakFinalSet: !!parsed.superTiebreakFinalSet,
+    };
+  } catch {
+    return DEFAULT_RULES;
   }
 }
 
@@ -211,11 +229,12 @@ function computeState(events: EventType[], rules: Rules): State {
 
 export default function MatchPage() {
   const [events, setEvents] = useState<EventType[]>([]);
-  const [rules] = useState<Rules>(DEFAULT_RULES);
   const [players, setPlayers] = useState<Players>({ a1: "", a2: "", b1: "", b2: "" });
+  const [rules, setRules] = useState<Rules>(DEFAULT_RULES);
 
   useEffect(() => {
     setPlayers(loadPlayers());
+    setRules(loadRules());
   }, []);
 
   const state = useMemo(() => computeState(events, rules), [events, rules]);
@@ -240,6 +259,8 @@ export default function MatchPage() {
   const teamALabel = `${cleanName(players.a1) || "Team A"} and ${cleanName(players.a2) || ""}`.trim();
   const teamBLabel = `${cleanName(players.b1) || "Team B"} and ${cleanName(players.b2) || ""}`.trim();
 
+  const rulesText = `Best of 3 sets, tiebreak at 6 all, golden point ${rules.goldenPoint ? "on" : "off"}, super tiebreak ${rules.superTiebreakFinalSet ? "on" : "off"}`;
+
   return (
     <main
       style={{
@@ -259,7 +280,7 @@ export default function MatchPage() {
           </Link>
 
           <Link href="/match/setup" style={{ color: TEAL, fontWeight: 900, textDecoration: "none" }}>
-            Change players
+            Change setup
           </Link>
         </div>
 
@@ -327,7 +348,7 @@ export default function MatchPage() {
         </div>
 
         <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
-          Best of 3 sets, tiebreak at 6 all, golden point off
+          {rulesText}
         </div>
       </div>
     </main>

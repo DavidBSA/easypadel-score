@@ -10,12 +10,20 @@ const WHITE = "#FFFFFF";
 
 const PLAYERS_KEY = "eps_players_v1";
 const POOL_KEY = "eps_player_pool_v1";
+const RULES_KEY = "eps_match_rules_v1";
 
 type Players = {
   a1: string;
   a2: string;
   b1: string;
   b2: string;
+};
+
+type Rules = {
+  bestOfSets: 3;
+  goldenPoint: boolean;
+  tiebreakAtSixAll: boolean;
+  superTiebreakFinalSet: boolean;
 };
 
 function cleanName(s: string) {
@@ -63,6 +71,36 @@ function loadPlayers(): Players {
 function savePlayers(p: Players) {
   if (typeof window === "undefined") return;
   localStorage.setItem(PLAYERS_KEY, JSON.stringify(p));
+}
+
+function loadRules(): Rules {
+  const defaults: Rules = {
+    bestOfSets: 3,
+    goldenPoint: false,
+    tiebreakAtSixAll: true,
+    superTiebreakFinalSet: false,
+  };
+
+  if (typeof window === "undefined") return defaults;
+
+  try {
+    const raw = localStorage.getItem(RULES_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<Rules>;
+    return {
+      bestOfSets: 3,
+      goldenPoint: !!parsed.goldenPoint,
+      tiebreakAtSixAll: true,
+      superTiebreakFinalSet: !!parsed.superTiebreakFinalSet,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveRules(r: Rules) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(RULES_KEY, JSON.stringify(r));
 }
 
 function AddPlayerModal({
@@ -152,11 +190,19 @@ export default function MatchSetupPage() {
 
   const [pool, setPool] = useState<string[]>([]);
   const [players, setPlayers] = useState<Players>({ a1: "", a2: "", b1: "", b2: "" });
+  const [rules, setRules] = useState<Rules>({
+    bestOfSets: 3,
+    goldenPoint: false,
+    tiebreakAtSixAll: true,
+    superTiebreakFinalSet: false,
+  });
+
   const [showAddPlayer, setShowAddPlayer] = useState(false);
 
   useEffect(() => {
     setPool(loadPool());
     setPlayers(loadPlayers());
+    setRules(loadRules());
   }, []);
 
   const sortedPool = useMemo(() => {
@@ -165,7 +211,7 @@ export default function MatchSetupPage() {
     return unique;
   }, [pool]);
 
-  function update(key: keyof Players, value: string) {
+  function updatePlayer(key: keyof Players, value: string) {
     setPlayers((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -183,13 +229,34 @@ export default function MatchSetupPage() {
 
   function startMatch() {
     if (!allSelected) return;
+
     savePlayers({
       a1: cleanName(players.a1),
       a2: cleanName(players.a2),
       b1: cleanName(players.b1),
       b2: cleanName(players.b2),
     });
+
+    saveRules({
+      bestOfSets: 3,
+      goldenPoint: !!rules.goldenPoint,
+      tiebreakAtSixAll: true,
+      superTiebreakFinalSet: !!rules.superTiebreakFinalSet,
+    });
+
     router.push("/match");
+  }
+
+  function toggleGoldenPoint() {
+    const next = { ...rules, goldenPoint: !rules.goldenPoint };
+    setRules(next);
+    saveRules(next);
+  }
+
+  function toggleSuperTiebreak() {
+    const next = { ...rules, superTiebreakFinalSet: !rules.superTiebreakFinalSet };
+    setRules(next);
+    saveRules(next);
   }
 
   return (
@@ -216,7 +283,7 @@ export default function MatchSetupPage() {
         </h1>
 
         <div style={{ opacity: 0.75, fontSize: 13, marginBottom: 14 }}>
-          Select four players, then start scoring
+          Select four players, choose rules, then start
         </div>
 
         <div
@@ -248,7 +315,7 @@ export default function MatchSetupPage() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <select
               value={players.a1}
-              onChange={(e) => update("a1", e.target.value)}
+              onChange={(e) => updatePlayer("a1", e.target.value)}
               style={selectStyle}
             >
               <option value="">Team A Player 1</option>
@@ -261,7 +328,7 @@ export default function MatchSetupPage() {
 
             <select
               value={players.a2}
-              onChange={(e) => update("a2", e.target.value)}
+              onChange={(e) => updatePlayer("a2", e.target.value)}
               style={selectStyle}
             >
               <option value="">Team A Player 2</option>
@@ -274,7 +341,7 @@ export default function MatchSetupPage() {
 
             <select
               value={players.b1}
-              onChange={(e) => update("b1", e.target.value)}
+              onChange={(e) => updatePlayer("b1", e.target.value)}
               style={selectStyle}
             >
               <option value="">Team B Player 1</option>
@@ -287,7 +354,7 @@ export default function MatchSetupPage() {
 
             <select
               value={players.b2}
-              onChange={(e) => update("b2", e.target.value)}
+              onChange={(e) => updatePlayer("b2", e.target.value)}
               style={selectStyle}
             >
               <option value="">Team B Player 2</option>
@@ -301,6 +368,42 @@ export default function MatchSetupPage() {
 
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
             Player pool size: {sortedPool.length}
+          </div>
+        </div>
+
+        <div
+          style={{
+            background: "rgba(255,255,255,0.06)",
+            borderRadius: 16,
+            padding: 16,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 900, marginBottom: 10 }}>Rules</div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            <button onClick={toggleGoldenPoint} style={ruleRowBtn}>
+              <span>Golden point at deuce</span>
+              <span style={{ color: rules.goldenPoint ? TEAL : "rgba(255,255,255,0.6)", fontWeight: 900 }}>
+                {rules.goldenPoint ? "On" : "Off"}
+              </span>
+            </button>
+
+            <button onClick={toggleSuperTiebreak} style={ruleRowBtn}>
+              <span>Super tiebreak as final set</span>
+              <span
+                style={{
+                  color: rules.superTiebreakFinalSet ? TEAL : "rgba(255,255,255,0.6)",
+                  fontWeight: 900,
+                }}
+              >
+                {rules.superTiebreakFinalSet ? "On" : "Off"}
+              </span>
+            </button>
+
+            <div style={{ fontSize: 12, opacity: 0.75 }}>
+              Best of 3 sets, tiebreak at 6 all
+            </div>
           </div>
         </div>
 
@@ -374,4 +477,18 @@ const secondaryBtn: React.CSSProperties = {
   color: WHITE,
   fontWeight: 800,
   cursor: "pointer",
+};
+
+const ruleRowBtn: React.CSSProperties = {
+  width: "100%",
+  padding: 14,
+  borderRadius: 14,
+  border: "1px solid rgba(255,255,255,0.18)",
+  background: "rgba(255,255,255,0.03)",
+  color: WHITE,
+  cursor: "pointer",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  fontWeight: 800,
 };
