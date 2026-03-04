@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import PlayerPicker from "../../../components/PlayerPicker";
+import PlayerPicker from "../../components/PlayerPicker";
 
 const NAVY = "#0F1E2E";
 const WHITE = "#FFFFFF";
