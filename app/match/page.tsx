@@ -82,10 +82,6 @@ function normalSetWinner(gA: number, gB: number): Team | null {
 }
 
 function determineTiebreakServeTeam(startingServerIndex: number, tbPointNumber: number): Team {
-  // Point 1: starting server
-  // Points 2 and 3: other team
-  // Points 4 and 5: starting team
-  // Then pairs repeat
   if (tbPointNumber <= 0) return startingServerIndex % 2 === 0 ? "A" : "B";
   if (tbPointNumber === 1) return startingServerIndex % 2 === 0 ? "A" : "B";
 
@@ -99,9 +95,9 @@ function determineTiebreakServeTeam(startingServerIndex: number, tbPointNumber: 
 export default function MatchPage() {
   const router = useRouter();
 
-  const payload = useMemo(() => {
-    return safeParseJSON<MatchPayload | null>(localStorage.getItem(STORAGE_MATCH_KEY), null);
-  }, []);
+  // IMPORTANT: do NOT touch localStorage during render (prerender happens on server)
+  const [payload, setPayload] = useState<MatchPayload | null>(null);
+  const [loaded, setLoaded] = useState<boolean>(false);
 
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [showServeHelper, setShowServeHelper] = useState<boolean>(true);
@@ -126,8 +122,14 @@ export default function MatchPage() {
   });
 
   useEffect(() => {
-    if (!payload) router.push("/match/setup");
-  }, [payload, router]);
+    const p = safeParseJSON<MatchPayload | null>(localStorage.getItem(STORAGE_MATCH_KEY), null);
+    setPayload(p);
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (loaded && !payload) router.push("/match/setup");
+  }, [loaded, payload, router]);
 
   function pushHistory(prev: Snapshot) {
     setHistory((h) => [...h, prev]);
@@ -226,7 +228,6 @@ export default function MatchPage() {
     next.pB = 0;
     next.adTeam = null;
 
-    // rotate server for next game
     next.serverIndex += 1;
 
     const setWin = normalSetWinner(next.gamesA, next.gamesB);
@@ -311,16 +312,10 @@ export default function MatchPage() {
       const golden = payload.rules.goldenPoint;
 
       if (prev.pA >= 3 && prev.pB >= 3) {
-        if (golden) {
-          return winGame(prev, team);
-        }
+        if (golden) return winGame(prev, team);
 
-        if (prev.adTeam === null) {
-          return { ...prev, adTeam: team };
-        }
-        if (prev.adTeam === team) {
-          return winGame(prev, team);
-        }
+        if (prev.adTeam === null) return { ...prev, adTeam: team };
+        if (prev.adTeam === team) return winGame(prev, team);
         return { ...prev, adTeam: null };
       }
 
@@ -330,9 +325,7 @@ export default function MatchPage() {
 
       const lead = next.pA - next.pB;
       if (next.pA >= 4 || next.pB >= 4) {
-        if (Math.abs(lead) >= 2) {
-          return winGame(prev, lead > 0 ? "A" : "B");
-        }
+        if (Math.abs(lead) >= 2) return winGame(prev, lead > 0 ? "A" : "B");
       }
 
       if (next.pA >= 4 && next.pB <= 2) return winGame(prev, "A");
@@ -378,7 +371,6 @@ export default function MatchPage() {
     return `Set ${state.setIndex + 1}`;
   }, [payload, state.isTiebreak, state.matchOver, state.setIndex, state.tiebreakTarget, state.winner]);
 
-  // Style helpers (functions) live OUTSIDE the plain styles object
   const chipStyle = (active: boolean): React.CSSProperties => ({
     padding: "10px 12px",
     borderRadius: 999,
@@ -487,6 +479,17 @@ export default function MatchPage() {
       border: "1px solid rgba(255,255,255,0.14)",
     },
   };
+
+  // Small loading state while localStorage is read
+  if (!loaded) {
+    return (
+      <div style={styles.page}>
+        <div style={{ ...styles.shell, alignItems: "center", paddingTop: 40 }}>
+          <div style={{ opacity: 0.85, fontWeight: 900 }}>Loading match…</div>
+        </div>
+      </div>
+    );
+  }
 
   if (!payload) return null;
 
