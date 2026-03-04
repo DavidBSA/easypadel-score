@@ -43,7 +43,6 @@ const DEFAULT_RULES: Rules = {
 };
 
 const PLAYERS_KEY = "eps_players_v1";
-const POOL_KEY = "eps_player_pool_v1";
 
 function cleanName(s: string) {
   return s.replace(/\s+/g, " ").trim();
@@ -66,32 +65,6 @@ function loadPlayers(): Players {
   }
 }
 
-function savePlayers(p: Players) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(PLAYERS_KEY, JSON.stringify(p));
-}
-
-function loadPool(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(POOL_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((x) => typeof x === "string")
-      .map((x) => cleanName(x))
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function savePool(pool: string[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(POOL_KEY, JSON.stringify(pool));
-}
-
 function pointsLabel(pointsA: number, pointsB: number, rules: Rules) {
   if (pointsA >= 3 && pointsB >= 3) {
     if (pointsA === pointsB) return { a: "40", b: "40", note: "Deuce" };
@@ -102,11 +75,7 @@ function pointsLabel(pointsA: number, pointsB: number, rules: Rules) {
   }
 
   const map = ["0", "15", "30", "40"] as const;
-  return {
-    a: map[Math.min(pointsA, 3)],
-    b: map[Math.min(pointsB, 3)],
-    note: "",
-  };
+  return { a: map[Math.min(pointsA, 3)], b: map[Math.min(pointsB, 3)], note: "" };
 }
 
 function isGameOver(pointsA: number, pointsB: number, rules: Rules) {
@@ -122,13 +91,11 @@ function gameWinner(pointsA: number, pointsB: number): Team {
 function isSetOver(gamesA: number, gamesB: number, rules: Rules) {
   const maxG = Math.max(gamesA, gamesB);
   const diff = Math.abs(gamesA - gamesB);
-
   if (maxG >= 6 && diff >= 2) return true;
 
   if (rules.tiebreakAtSixAll) {
     if ((gamesA === 7 && gamesB === 6) || (gamesB === 7 && gamesA === 6)) return true;
   }
-
   return false;
 }
 
@@ -136,7 +103,7 @@ function setWinner(gamesA: number, gamesB: number): Team {
   return gamesA > gamesB ? "A" : "B";
 }
 
-function targetSets(rules: Rules) {
+function targetSets() {
   return 2;
 }
 
@@ -200,7 +167,7 @@ function computeState(events: EventType[], rules: Rules): State {
         gamesA = 0;
         gamesB = 0;
 
-        if (setsA === targetSets(rules) || setsB === targetSets(rules)) {
+        if (setsA === targetSets() || setsB === targetSets()) {
           finished = true;
           note = "Match finished";
           break;
@@ -228,7 +195,7 @@ function computeState(events: EventType[], rules: Rules): State {
         gamesA = 0;
         gamesB = 0;
 
-        if (setsA === targetSets(rules) || setsB === targetSets(rules)) {
+        if (setsA === targetSets() || setsB === targetSets()) {
           finished = true;
           note = "Match finished";
           break;
@@ -242,134 +209,10 @@ function computeState(events: EventType[], rules: Rules): State {
   return { setsA, setsB, gamesA, gamesB, pointsA, pointsB, finished, note };
 }
 
-function AddPlayerModal({
-  open,
-  onClose,
-  onAdd,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onAdd: (name: string) => void;
-}) {
-  const [name, setName] = useState("");
-
-  useEffect(() => {
-    if (open) setName("");
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.6)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-        padding: 16,
-      }}
-    >
-      <div
-        style={{
-          background: NAVY,
-          padding: 18,
-          borderRadius: 14,
-          width: "100%",
-          maxWidth: 360,
-          color: WHITE,
-          border: "1px solid rgba(255,255,255,0.16)",
-        }}
-      >
-        <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Add Player</div>
-
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Player name"
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            padding: 12,
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.2)",
-            background: "rgba(255,255,255,0.05)",
-            color: WHITE,
-            outline: "none",
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              const n = cleanName(name);
-              if (!n) return;
-              onAdd(n);
-              onClose();
-            }
-          }}
-        />
-
-        <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
-          <button
-            onClick={() => {
-              const n = cleanName(name);
-              if (!n) return;
-              onAdd(n);
-              onClose();
-            }}
-            style={{
-              flex: 1,
-              background: TEAL,
-              border: "none",
-              padding: 12,
-              borderRadius: 12,
-              fontWeight: 900,
-              color: WHITE,
-              cursor: "pointer",
-            }}
-          >
-            Add
-          </button>
-
-          <button
-            onClick={onClose}
-            style={{
-              flex: 1,
-              background: "transparent",
-              border: "1px solid rgba(255,255,255,0.2)",
-              padding: 12,
-              borderRadius: 12,
-              color: WHITE,
-              fontWeight: 800,
-              cursor: "pointer",
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  boxSizing: "border-box",
-  padding: 12,
-  borderRadius: 12,
-  border: "1px solid rgba(255,255,255,0.18)",
-  background: "rgba(255,255,255,0.04)",
-  color: WHITE,
-  outline: "none",
-};
-
 export default function MatchPage() {
   const [events, setEvents] = useState<EventType[]>([]);
   const [rules] = useState<Rules>(DEFAULT_RULES);
-
   const [players, setPlayers] = useState<Players>({ a1: "", a2: "", b1: "", b2: "" });
-
-  const [showAddPlayer, setShowAddPlayer] = useState(false);
 
   useEffect(() => {
     setPlayers(loadPlayers());
@@ -394,20 +237,8 @@ export default function MatchPage() {
     setEvents([]);
   }
 
-  function updatePlayer(key: keyof Players, value: string) {
-    const next = { ...players, [key]: value };
-    setPlayers(next);
-    savePlayers(next);
-  }
-
-  const teamALabel = `${players.a1 || "Player 1"} & ${players.a2 || "Player 2"}`;
-  const teamBLabel = `${players.b1 || "Player 1"} & ${players.b2 || "Player 2"}`;
-
-  function handleAddPlayer(name: string) {
-    const current = loadPool();
-    const next = Array.from(new Set([...current, name].map(cleanName).filter(Boolean)));
-    savePool(next);
-  }
+  const teamALabel = `${cleanName(players.a1) || "Team A"} and ${cleanName(players.a2) || ""}`.trim();
+  const teamBLabel = `${cleanName(players.b1) || "Team B"} and ${cleanName(players.b2) || ""}`.trim();
 
   return (
     <main
@@ -426,66 +257,13 @@ export default function MatchPage() {
           <Link href="/" style={{ color: WHITE }}>
             ← Home
           </Link>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Standard match</div>
+
+          <Link href="/match/setup" style={{ color: TEAL, fontWeight: 900, textDecoration: "none" }}>
+            Change players
+          </Link>
         </div>
 
-        <h1 style={{ fontSize: "1.8rem", marginBottom: 10 }}>Live Match</h1>
-
-        <div
-          style={{
-            background: "rgba(255,255,255,0.06)",
-            borderRadius: 16,
-            padding: 16,
-            marginBottom: 12,
-          }}
-        >
-          <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 10 }}>
-            Players (saved for next time)
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <input
-              value={players.a1}
-              onChange={(e) => updatePlayer("a1", e.target.value)}
-              placeholder="Team A, Player 1"
-              style={inputStyle}
-            />
-            <input
-              value={players.a2}
-              onChange={(e) => updatePlayer("a2", e.target.value)}
-              placeholder="Team A, Player 2"
-              style={inputStyle}
-            />
-            <input
-              value={players.b1}
-              onChange={(e) => updatePlayer("b1", e.target.value)}
-              placeholder="Team B, Player 1"
-              style={inputStyle}
-            />
-            <input
-              value={players.b2}
-              onChange={(e) => updatePlayer("b2", e.target.value)}
-              placeholder="Team B, Player 2"
-              style={inputStyle}
-            />
-          </div>
-
-          <div style={{ marginTop: 10 }}>
-            <button
-              onClick={() => setShowAddPlayer(true)}
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: 0,
-                color: TEAL,
-                cursor: "pointer",
-                fontWeight: 900,
-              }}
-            >
-              + Add player
-            </button>
-          </div>
-        </div>
+        <h1 style={{ fontSize: "1.8rem", marginBottom: 10, fontWeight: 900 }}>Live Match</h1>
 
         <div
           style={{
@@ -496,8 +274,8 @@ export default function MatchPage() {
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", opacity: 0.9 }}>
-            <div style={{ fontSize: 13 }}>{teamALabel}</div>
-            <div style={{ fontSize: 13 }}>{teamBLabel}</div>
+            <div style={{ fontSize: 13, fontWeight: 900 }}>{teamALabel}</div>
+            <div style={{ fontSize: 13, fontWeight: 900 }}>{teamBLabel}</div>
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
@@ -531,81 +309,49 @@ export default function MatchPage() {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <button
-            onClick={() => add("point_a")}
-            style={{
-              padding: 22,
-              borderRadius: 14,
-              border: "none",
-              background: TEAL,
-              color: WHITE,
-              fontSize: 18,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={() => add("point_a")} style={primaryBtn}>
             Point A
           </button>
 
-          <button
-            onClick={() => add("point_b")}
-            style={{
-              padding: 22,
-              borderRadius: 14,
-              border: "none",
-              background: TEAL,
-              color: WHITE,
-              fontSize: 18,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={() => add("point_b")} style={primaryBtn}>
             Point B
           </button>
 
-          <button
-            onClick={undo}
-            style={{
-              padding: 16,
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.25)",
-              background: "transparent",
-              color: WHITE,
-              fontSize: 16,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={undo} style={secondaryBtn}>
             Undo
           </button>
 
-          <button
-            onClick={resetScore}
-            style={{
-              padding: 16,
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.25)",
-              background: "transparent",
-              color: WHITE,
-              fontSize: 16,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={resetScore} style={secondaryBtn}>
             Reset
           </button>
         </div>
 
         <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
-          Rules: Best of 3 sets. Tiebreak at 6 all. Golden point off.
+          Best of 3 sets, tiebreak at 6 all, golden point off
         </div>
       </div>
-
-      <AddPlayerModal
-        open={showAddPlayer}
-        onClose={() => setShowAddPlayer(false)}
-        onAdd={handleAddPlayer}
-      />
     </main>
   );
 }
+
+const primaryBtn: React.CSSProperties = {
+  padding: 22,
+  borderRadius: 14,
+  border: "none",
+  background: TEAL,
+  color: WHITE,
+  fontSize: 18,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: 16,
+  borderRadius: 14,
+  border: "1px solid rgba(255,255,255,0.25)",
+  background: "transparent",
+  color: WHITE,
+  fontSize: 16,
+  fontWeight: 900,
+  cursor: "pointer",
+};

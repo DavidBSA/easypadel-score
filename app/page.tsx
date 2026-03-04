@@ -1,40 +1,75 @@
 import Link from "next/link";
 
+const NAVY = "#0F1E2E";
+const TEAL = "#00A8A8";
+const WHITE = "#FFFFFF";
+
 export default function Home() {
   return (
     <main
       style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100vh",
-        background: "#0F1E2E",
-        color: "#FFFFFF",
+        minHeight: "100vh",
+        background: NAVY,
+        color: WHITE,
         fontFamily: "Arial",
-        textAlign: "center",
+        display: "flex",
+        justifyContent: "center",
         padding: 20,
       }}
     >
-      <h1 style={{ fontSize: "2.5rem", marginBottom: 14 }}>
-        Easy Padel Score
-      </h1>
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 360,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
+          gap: 14,
+        }}
+      >
+        <div
+          style={{
+            width: 76,
+            height: 76,
+            borderRadius: 18,
+            border: "1px solid rgba(255,255,255,0.18)",
+            background: "rgba(255,255,255,0.06)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontWeight: 900,
+            letterSpacing: 1,
+          }}
+        >
+          EPS
+        </div>
 
-      <p style={{ marginBottom: 28, opacity: 0.8 }}>
-        Simple scoring for Padel matches
-      </p>
+        <h1 style={{ fontSize: "2.2rem", margin: 0, fontWeight: 900 }}>
+          Easy Padel Score
+        </h1>
 
-      <div style={{ display: "grid", gap: 12, width: "100%", maxWidth: 320 }}>
-        <Link href="/match" style={primaryLink}>
-          Start Match
-        </Link>
+        <div style={{ opacity: 0.78, fontSize: 13, marginBottom: 10 }}>
+          Simple scoring for matches and tournaments
+        </div>
 
-        <Link href="/players" style={secondaryLink}>
-          Players
-        </Link>
+        <div style={{ width: "100%", display: "grid", gap: 12 }}>
+          <Link href="/match/setup" style={primaryLink}>
+            Standard Match
+          </Link>
 
-        <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>
-          Americano mode is next
+          <Link href="/americano/mixed" style={secondaryLink}>
+            Mixed Americano
+          </Link>
+
+          <Link href="/americano/team" style={secondaryLink}>
+            Team Americano
+          </Link>
+        </div>
+
+        <div style={{ opacity: 0.6, fontSize: 12, marginTop: 10 }}>
+          Next up, Americano generator and standings
         </div>
       </div>
     </main>
@@ -42,27 +77,27 @@ export default function Home() {
 }
 
 const primaryLink: React.CSSProperties = {
-  padding: "16px 32px",
-  fontSize: 18,
-  borderRadius: 12,
+  padding: "16px 18px",
+  fontSize: 17,
+  borderRadius: 14,
   border: "none",
-  background: "#00A8A8",
-  color: "#FFFFFF",
+  background: TEAL,
+  color: WHITE,
   cursor: "pointer",
-  fontWeight: 800,
+  fontWeight: 900,
   textDecoration: "none",
-  display: "inlineBlock",
+  display: "block",
 };
 
 const secondaryLink: React.CSSProperties = {
-  padding: "14px 32px",
+  padding: "14px 18px",
   fontSize: 16,
-  borderRadius: 12,
+  borderRadius: 14,
   border: "1px solid rgba(255,255,255,0.25)",
   background: "transparent",
-  color: "#FFFFFF",
+  color: WHITE,
   cursor: "pointer",
-  fontWeight: 800,
+  fontWeight: 900,
   textDecoration: "none",
-  display: "inlineBlock",
+  display: "block",
 };
