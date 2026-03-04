@@ -1,7 +1,15 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+
+type SetRecord = {
+  gamesA: number;
+  gamesB: number;
+  tiebreakPlayed: boolean;
+  tbA: number;
+  tbB: number;
+};
 
 type Snapshot = {
   pointsA: number;
@@ -16,10 +24,12 @@ type Snapshot = {
   serveEnabled: boolean;
   serverTeam: "A" | "B" | null;
   serverIndexInTeam: 0 | 1;
+  setHistory: SetRecord[];
 };
 
 export default function MatchPage() {
   const params = useSearchParams();
+  const router = useRouter();
   const data = params.get("data");
 
   const match = useMemo(() => {
@@ -60,6 +70,7 @@ export default function MatchPage() {
   const [serverTeam, setServerTeam] = useState<"A" | "B" | null>(null);
   const [serverIndexInTeam, setServerIndexInTeam] = useState<0 | 1>(0);
 
+  const [setHistory, setSetHistory] = useState<SetRecord[]>([]);
   const [history, setHistory] = useState<Snapshot[]>([]);
 
   function setsNeeded(totalSets: number) {
@@ -88,6 +99,7 @@ export default function MatchPage() {
         serveEnabled,
         serverTeam,
         serverIndexInTeam,
+        setHistory: [...setHistory],
       },
     ]);
   }
@@ -95,6 +107,7 @@ export default function MatchPage() {
   function undo() {
     setHistory((prev) => {
       if (prev.length === 0) return prev;
+
       const previous = prev[prev.length - 1];
 
       setPointsA(previous.pointsA);
@@ -111,6 +124,8 @@ export default function MatchPage() {
       setServeEnabled(previous.serveEnabled);
       setServerTeam(previous.serverTeam);
       setServerIndexInTeam(previous.serverIndexInTeam);
+
+      setSetHistory(previous.setHistory);
 
       return prev.slice(0, prev.length - 1);
     });
@@ -147,7 +162,21 @@ export default function MatchPage() {
     return false;
   }
 
-  function awardSetToA(finalGamesA: number, finalGamesB: number) {
+  function recordSet(gA: number, gB: number, tbPlayed: boolean, tA: number, tB: number) {
+    setSetHistory((prev) => [
+      ...prev,
+      {
+        gamesA: gA,
+        gamesB: gB,
+        tiebreakPlayed: tbPlayed,
+        tbA: tA,
+        tbB: tB,
+      },
+    ]);
+  }
+
+  function awardSetToA(finalGamesA: number, finalGamesB: number, tbPlayed: boolean, finalTbA: number, finalTbB: number) {
+    recordSet(finalGamesA, finalGamesB, tbPlayed, finalTbA, finalTbB);
     setSetsWonA((v) => v + 1);
     setGamesA(0);
     setGamesB(0);
@@ -157,7 +186,8 @@ export default function MatchPage() {
     resetGamePoints();
   }
 
-  function awardSetToB(finalGamesA: number, finalGamesB: number) {
+  function awardSetToB(finalGamesA: number, finalGamesB: number, tbPlayed: boolean, finalTbA: number, finalTbB: number) {
+    recordSet(finalGamesA, finalGamesB, tbPlayed, finalTbA, finalTbB);
     setSetsWonB((v) => v + 1);
     setGamesA(0);
     setGamesB(0);
@@ -177,7 +207,7 @@ export default function MatchPage() {
     }
 
     if (nextA >= 6 && nextA - nextB >= 2) {
-      awardSetToA(nextA, nextB);
+      awardSetToA(nextA, nextB, false, 0, 0);
       advanceServerAfterGame();
       return;
     }
@@ -197,7 +227,7 @@ export default function MatchPage() {
     }
 
     if (nextB >= 6 && nextB - nextA >= 2) {
-      awardSetToB(nextA, nextB);
+      awardSetToB(nextA, nextB, false, 0, 0);
       advanceServerAfterGame();
       return;
     }
@@ -215,7 +245,7 @@ export default function MatchPage() {
       setTbA(next);
 
       if (next >= 7 && next - tbB >= 2) {
-        awardSetToA(7, 6);
+        awardSetToA(7, 6, true, next, tbB);
       }
       return;
     }
@@ -251,7 +281,7 @@ export default function MatchPage() {
       setTbB(next);
 
       if (next >= 7 && next - tbA >= 2) {
-        awardSetToB(6, 7);
+        awardSetToB(6, 7, true, tbA, next);
       }
       return;
     }
@@ -291,16 +321,36 @@ export default function MatchPage() {
   }
 
   const needed = setsNeeded(match.sets);
-  const matchWinner =
-    setsWonA >= needed ? "Team A Wins!" : setsWonB >= needed ? "Team B Wins!" : null;
+  const winner =
+    setsWonA >= needed ? ("A" as const) : setsWonB >= needed ? ("B" as const) : null;
+
+  const matchWinnerText =
+    winner === "A" ? "Team A Wins!" : winner === "B" ? "Team B Wins!" : null;
 
   const serverName = (() => {
     if (!serveEnabled) return null;
     if (!serverTeam) return "Select first server";
-
     if (serverTeam === "A") return teamA[serverIndexInTeam];
     return teamB[serverIndexInTeam];
   })();
+
+  function finishMatch() {
+    if (!winner) return;
+
+    const payload = {
+      mode: match.mode,
+      setsConfigured: match.sets,
+      teamA,
+      teamB,
+      setsWonA,
+      setsWonB,
+      setHistory,
+      winner,
+    };
+
+    const encoded = encodeURIComponent(JSON.stringify(payload));
+    router.push(`/results?data=${encoded}`);
+  }
 
   return (
     <main style={{ textAlign: "center", padding: "40px" }}>
@@ -315,20 +365,12 @@ export default function MatchPage() {
       <div style={{ marginTop: "20px" }}>
         <button
           onClick={() => setServeEnabled((v) => !v)}
-          style={{
-            padding: "10px 18px",
-            marginRight: "10px",
-          }}
+          style={{ padding: "10px 18px", marginRight: "10px" }}
         >
           Serve Helper: {serveEnabled ? "On" : "Off"}
         </button>
 
-        <button
-          onClick={randomFirstServer}
-          style={{
-            padding: "10px 18px",
-          }}
-        >
+        <button onClick={randomFirstServer} style={{ padding: "10px 18px" }}>
           Random First Server
         </button>
 
@@ -365,15 +407,13 @@ export default function MatchPage() {
           <p style={{ fontSize: "32px" }}>
             {tbA} , {tbB}
           </p>
-          <p style={{ marginTop: "6px" }}>
-            First to 7, win by 2
-          </p>
+          <p style={{ marginTop: "6px" }}>First to 7, win by 2</p>
         </>
       )}
 
-      {matchWinner && <h2 style={{ color: "green" }}>{matchWinner}</h2>}
+      {matchWinnerText && <h2 style={{ color: "green" }}>{matchWinnerText}</h2>}
 
-      {!matchWinner && (
+      {!winner && (
         <>
           <button onClick={pointTeamA} style={{ margin: "10px", padding: "15px 25px" }}>
             Point Team A
@@ -388,15 +428,22 @@ export default function MatchPage() {
       <div style={{ marginTop: "30px" }}>
         <button
           onClick={undo}
-          style={{
-            padding: "10px 20px",
-            background: "#444",
-            color: "white",
-          }}
+          style={{ padding: "10px 20px", background: "#444", color: "white" }}
         >
           Undo Last Point
         </button>
       </div>
+
+      {winner && (
+        <div style={{ marginTop: "24px" }}>
+          <button
+            onClick={finishMatch}
+            style={{ padding: "14px 22px", fontSize: "18px" }}
+          >
+            Finish Match
+          </button>
+        </div>
+      )}
     </main>
   );
 }
