@@ -52,6 +52,7 @@ export default function MatchSetupPage() {
     const initial = safeParseJSON<string[]>(localStorage.getItem(STORAGE_PLAYERS_KEY), []);
     const cleaned = Array.from(new Set(initial.map(normalizeName).filter(Boolean)));
     setSavedPlayers(cleaned);
+
     if (cleaned.length >= 4) {
       setSelected([cleaned[0] ?? "", cleaned[1] ?? "", cleaned[2] ?? "", cleaned[3] ?? ""]);
     }
@@ -60,8 +61,7 @@ export default function MatchSetupPage() {
   const canStart = useMemo(() => {
     const names = selected.map(normalizeName).filter(Boolean);
     if (names.length !== 4) return false;
-    const unique = new Set(names);
-    return unique.size === 4;
+    return new Set(names).size === 4;
   }, [selected]);
 
   function updateSelected(index: number, value: string) {
@@ -90,6 +90,7 @@ export default function MatchSetupPage() {
 
   function startMatch() {
     const names = selected.map(normalizeName).filter(Boolean);
+
     if (names.length !== 4) {
       setError("Please select 4 players.");
       return;
@@ -112,6 +113,20 @@ export default function MatchSetupPage() {
     localStorage.setItem(STORAGE_MATCH_KEY, JSON.stringify(payload));
     router.push("/match");
   }
+
+  // Dynamic style helper must NOT live inside a Record<string, CSSProperties>
+  const pillStyle = (active: boolean): React.CSSProperties => ({
+    padding: "12px 12px",
+    borderRadius: 999,
+    border: active ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.18)",
+    background: active ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.08)",
+    color: WHITE,
+    fontWeight: 900,
+    cursor: "pointer",
+    userSelect: "none",
+    minWidth: 110,
+    textAlign: "center",
+  });
 
   const styles: Record<string, React.CSSProperties> = {
     page: {
@@ -181,18 +196,6 @@ export default function MatchSetupPage() {
       whiteSpace: "nowrap",
     },
     pillRow: { display: "flex", gap: 10, flexWrap: "wrap" },
-    pill: (active: boolean): React.CSSProperties => ({
-      padding: "12px 12px",
-      borderRadius: 999,
-      border: active ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.18)",
-      background: active ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.08)",
-      color: WHITE,
-      fontWeight: 900,
-      cursor: "pointer",
-      userSelect: "none",
-      minWidth: 110,
-      textAlign: "center",
-    }),
     toggle: {
       display: "flex",
       alignItems: "center",
@@ -227,11 +230,7 @@ export default function MatchSetupPage() {
           {["Player 1", "Player 2", "Player 3", "Player 4"].map((label, i) => (
             <div key={label}>
               <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 6, fontWeight: 800 }}>{label}</div>
-              <select
-                style={styles.select}
-                value={selected[i]}
-                onChange={(e) => updateSelected(i, e.target.value)}
-              >
+              <select style={styles.select} value={selected[i]} onChange={(e) => updateSelected(i, e.target.value)}>
                 <option value="">Select player</option>
                 {savedPlayers.map((p) => (
                   <option key={p} value={p}>
@@ -266,13 +265,13 @@ export default function MatchSetupPage() {
 
         <div style={styles.sectionTitle}>Number of sets</div>
         <div style={styles.pillRow}>
-          <div style={styles.pill(sets === 1)} onClick={() => setSets(1)}>
+          <div style={pillStyle(sets === 1)} onClick={() => setSets(1)}>
             1 set
           </div>
-          <div style={styles.pill(sets === 3)} onClick={() => setSets(3)}>
+          <div style={pillStyle(sets === 3)} onClick={() => setSets(3)}>
             Best of 3
           </div>
-          <div style={styles.pill(sets === 5)} onClick={() => setSets(5)}>
+          <div style={pillStyle(sets === 5)} onClick={() => setSets(5)}>
             Best of 5
           </div>
         </div>
