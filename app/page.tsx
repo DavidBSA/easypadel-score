@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 
 const NAVY = "#0F1E2E";
 const WHITE = "#FFFFFF";
@@ -15,83 +16,84 @@ export default function HomePage() {
       minHeight: "100vh",
       background: NAVY,
       color: WHITE,
-      padding: 16,
       display: "flex",
       justifyContent: "center",
-      alignItems: "flex-start",
+      alignItems: "center",
+      padding: 20,
     },
     card: {
       width: "100%",
-      maxWidth: 520,
-      marginTop: 18,
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      borderRadius: 18,
-      padding: 16,
-      boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+      maxWidth: 420,
+      display: "grid",
+      gap: 24,
+      textAlign: "center",
     },
-    logoRow: {
+    logoWrap: {
       display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 12,
-      marginBottom: 10,
+      justifyContent: "center",
     },
-    title: { fontSize: 22, fontWeight: 950, letterSpacing: 0.2 },
-    subtitle: { opacity: 0.85, fontSize: 13, marginTop: 6, lineHeight: 1.3 },
-    buttonStack: { display: "grid", gap: 10, marginTop: 16 },
-    btnPrimary: {
-      width: "100%",
+    title: {
+      fontSize: 28,
+      fontWeight: 900,
+      letterSpacing: 0.4,
+    },
+    btn: {
+      borderRadius: 16,
+      padding: "18px 16px",
+      fontSize: 18,
+      fontWeight: 900,
+      cursor: "pointer",
+      border: "none",
       background: TEAL,
       color: NAVY,
-      border: "none",
-      borderRadius: 16,
-      padding: "18px 14px",
-      fontSize: 18,
-      fontWeight: 950,
-      cursor: "pointer",
+      width: "100%",
     },
     btnSecondary: {
-      width: "100%",
-      background: "rgba(255,255,255,0.10)",
-      color: WHITE,
-      border: "1px solid rgba(255,255,255,0.16)",
       borderRadius: 16,
-      padding: "18px 14px",
+      padding: "18px 16px",
       fontSize: 18,
-      fontWeight: 950,
+      fontWeight: 900,
       cursor: "pointer",
+      border: "1px solid rgba(255,255,255,0.18)",
+      background: "rgba(255,255,255,0.08)",
+      color: WHITE,
+      width: "100%",
     },
-    tiny: { opacity: 0.75, fontSize: 12, marginTop: 14, textAlign: "center" },
+    subtitle: {
+      fontSize: 13,
+      opacity: 0.7,
+      marginTop: -10,
+    },
   };
 
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <div style={styles.logoRow}>
-          <div>
-            <div style={styles.title}>EasyPadelScore</div>
-            <div style={styles.subtitle}>
-              Fast setup. Big buttons. Court readable scoring.
-            </div>
-          </div>
+        <div style={styles.logoWrap}>
+          <Image
+            src="/logo.svg"
+            alt="EasyPadelScore"
+            width={120}
+            height={120}
+            priority
+          />
         </div>
 
-        <div style={styles.buttonStack}>
-          <button style={styles.btnPrimary} onClick={() => router.push("/match/setup")}>
-            Standard Match
-          </button>
-
-          <button style={styles.btnSecondary} onClick={() => router.push("/americano")}>
-            Americano Session
-          </button>
-
-          <button style={styles.btnSecondary} onClick={() => router.push("/session/join")}>
-            Join Session
-          </button>
+        <div>
+          <div style={styles.title}>EasyPadelScore</div>
+          <div style={styles.subtitle}>Fast scoring for casual padel</div>
         </div>
 
-        <div style={styles.tiny}>Offline first. Built for casual play and clubs.</div>
+        <button style={styles.btn} onClick={() => router.push("/match/setup")}>
+          Start Match
+        </button>
+
+        <button
+          style={styles.btnSecondary}
+          onClick={() => router.push("/americano")}
+        >
+          Start Americano
+        </button>
       </div>
     </div>
   );
