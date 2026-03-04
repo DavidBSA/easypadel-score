@@ -24,7 +24,7 @@ type Snapshot = {
   serveEnabled: boolean;
   serverTeam: "A" | "B" | null;
   serverIndexInTeam: 0 | 1;
-  setHistory: SetRecord[];
+  completedSets: SetRecord[];
 };
 
 export default function MatchPage() {
@@ -70,7 +70,7 @@ export default function MatchPage() {
   const [serverTeam, setServerTeam] = useState<"A" | "B" | null>(null);
   const [serverIndexInTeam, setServerIndexInTeam] = useState<0 | 1>(0);
 
-  const [setHistory, setSetHistory] = useState<SetRecord[]>([]);
+  const [completedSets, setCompletedSets] = useState<SetRecord[]>([]);
   const [history, setHistory] = useState<Snapshot[]>([]);
 
   function setsNeeded(totalSets: number) {
@@ -84,7 +84,7 @@ export default function MatchPage() {
   }
 
   function saveState() {
-    setHistory((prev) => [
+    setHistory((prev: Snapshot[]) => [
       ...prev,
       {
         pointsA,
@@ -99,13 +99,13 @@ export default function MatchPage() {
         serveEnabled,
         serverTeam,
         serverIndexInTeam,
-        setHistory: [...setHistory],
+        completedSets: [...completedSets],
       },
     ]);
   }
 
   function undo() {
-    setHistory((prev) => {
+    setHistory((prev: Snapshot[]) => {
       if (prev.length === 0) return prev;
 
       const previous = prev[prev.length - 1];
@@ -125,7 +125,7 @@ export default function MatchPage() {
       setServerTeam(previous.serverTeam);
       setServerIndexInTeam(previous.serverIndexInTeam);
 
-      setSetHistory(previous.setHistory);
+      setCompletedSets(previous.completedSets);
 
       return prev.slice(0, prev.length - 1);
     });
@@ -163,7 +163,7 @@ export default function MatchPage() {
   }
 
   function recordSet(gA: number, gB: number, tbPlayed: boolean, tA: number, tB: number) {
-    setSetHistory((prev) => [
+    setCompletedSets((prev: SetRecord[]) => [
       ...prev,
       {
         gamesA: gA,
@@ -173,6 +173,25 @@ export default function MatchPage() {
         tbB: tB,
       },
     ]);
+  }
+
+  function fullResetMatch() {
+    setPointsA(0);
+    setPointsB(0);
+    setGamesA(0);
+    setGamesB(0);
+    setSetsWonA(0);
+    setSetsWonB(0);
+    setIsTiebreak(false);
+    setTbA(0);
+    setTbB(0);
+
+    setServeEnabled(false);
+    setServerTeam(null);
+    setServerIndexInTeam(0);
+
+    setCompletedSets([]);
+    setHistory([]);
   }
 
   function awardSetToA(finalGamesA: number, finalGamesB: number, tbPlayed: boolean, finalTbA: number, finalTbB: number) {
@@ -344,12 +363,24 @@ export default function MatchPage() {
       teamB,
       setsWonA,
       setsWonB,
-      setHistory,
+      setHistory: completedSets,
       winner,
     };
 
     const encoded = encodeURIComponent(JSON.stringify(payload));
     router.push(`/results?data=${encoded}`);
+  }
+
+  function resetMatchConfirm() {
+    const ok = window.confirm("Reset this match? This will clear scores and history.");
+    if (!ok) return;
+    fullResetMatch();
+  }
+
+  function newMatchConfirm() {
+    const ok = window.confirm("Go back to Home and start a new match?");
+    if (!ok) return;
+    router.push("/");
   }
 
   return (
@@ -361,6 +392,16 @@ export default function MatchPage() {
       <h2>{teamA.join(" & ")}</h2>
       <h2>vs</h2>
       <h2>{teamB.join(" & ")}</h2>
+
+      <div style={{ marginTop: "18px" }}>
+        <button onClick={newMatchConfirm} style={{ padding: "10px 16px", marginRight: "10px" }}>
+          New Match
+        </button>
+
+        <button onClick={resetMatchConfirm} style={{ padding: "10px 16px" }}>
+          Reset Match
+        </button>
+      </div>
 
       <div style={{ marginTop: "20px" }}>
         <button
