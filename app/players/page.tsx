@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 export default function PlayersPage() {
+
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -16,6 +17,8 @@ export default function PlayersPage() {
     ""
   ]);
 
+  const [sets, setSets] = useState(3);
+
   function updatePlayer(index: number, value: string) {
     const updated = [...players];
     updated[index] = value;
@@ -23,11 +26,21 @@ export default function PlayersPage() {
   }
 
   function startMatch() {
-    router.push("/match");
+
+    const matchData = {
+      players,
+      mode,
+      sets
+    };
+
+    const encoded = encodeURIComponent(JSON.stringify(matchData));
+
+    router.push(`/match?data=${encoded}`);
   }
 
   return (
     <main style={{ textAlign: "center", padding: "40px" }}>
+
       <h1>Enter Players</h1>
 
       <p>Match type: {mode}</p>
@@ -43,17 +56,47 @@ export default function PlayersPage() {
               style={{
                 padding: "10px",
                 fontSize: "16px",
-                width: "200px"
+                width: "220px"
               }}
             />
           </div>
         ))}
       </div>
 
+
+      <div style={{ marginTop: "25px" }}>
+        <h3>Number of Sets</h3>
+
+        <button
+          onClick={() => setSets(1)}
+          style={{
+            margin: "5px",
+            padding: "10px 20px",
+            background: sets === 1 ? "#333" : "#ccc",
+            color: sets === 1 ? "white" : "black"
+          }}
+        >
+          1 Set
+        </button>
+
+        <button
+          onClick={() => setSets(3)}
+          style={{
+            margin: "5px",
+            padding: "10px 20px",
+            background: sets === 3 ? "#333" : "#ccc",
+            color: sets === 3 ? "white" : "black"
+          }}
+        >
+          Best of 3
+        </button>
+      </div>
+
+
       <button
         onClick={startMatch}
         style={{
-          marginTop: "20px",
+          marginTop: "30px",
           padding: "12px 25px",
           fontSize: "18px"
         }}
@@ -61,7 +104,9 @@ export default function PlayersPage() {
         Start Match
       </button>
 
+
       <br />
+
 
       <button
         onClick={() => router.push("/")}
@@ -72,6 +117,7 @@ export default function PlayersPage() {
       >
         Back
       </button>
+
     </main>
   );
 }
