@@ -184,7 +184,7 @@ export default function HomePage() {
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.logoWrap}>
-          <Image src="/logo.svg" alt="EasyPadelScore" width={110} height={110} priority />
+          <Image src="/logo.png" alt="EasyPadelScore" width={110} height={110} priority />
         </div>
 
         <div>
