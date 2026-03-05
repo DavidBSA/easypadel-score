@@ -267,9 +267,7 @@ export default function AmericanoSessionPage() {
   const [loaded, setLoaded] = useState(false);
   const [session, setSession] = useState<AmericanoSession | null>(null);
   const [showServeHelper, setShowServeHelper] = useState(true);
-  const [historyByKey, setHistoryByKey] = useState
-    Record<string, MatchSnapshot[]>
-  >({});
+  const [historyByKey, setHistoryByKey] = useState<Record<string, MatchSnapshot[]>>({});
 
   useEffect(() => {
     const s = safeParseJSON<AmericanoSession | null>(
@@ -980,4 +978,352 @@ export default function AmericanoSessionPage() {
         <div style={styles.settingsRow}>
           <div style={{ display: "grid", gap: 4 }}>
             <div style={{ fontWeight: 1000 }}>Points per match</div>
+            <div style={styles.hint}>
+              Total points shared by both teams. Example 16, 21, 32.
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
+            <input
+              style={styles.input}
+              value={String(pointsPerMatch)}
+              inputMode="numeric"
+              onChange={(e) => {
+                const raw = e.target.value.replace(/[^\d]/g, "");
+                const n = raw ? Number(raw) : 0;
+                if (Number.isFinite(n)) setPointsPerMatch(n);
+              }}
+              aria-label="Points per match"
+            />
+
             <div
+              style={{
+                ...styles.chip,
+                borderColor: showServeHelper
+                  ? "rgba(0,168,168,0.55)"
+                  : "rgba(255,255,255,0.16)",
+              }}
+              onClick={() => setShowServeHelper((v) => !v)}
+            >
+              Serve helper
+            </div>
+
+            <div style={styles.chip} onClick={randomFirstServeForRound}>
+              Random first serve
+            </div>
+          </div>
+        </div>
+
+        {/* ── Session info card ── */}
+        <div style={styles.infoCard}>
+          <div style={styles.infoItem}>
+            <div style={styles.infoLabel}>Rounds generated</div>
+            <div style={styles.infoValue}>{roundNumbers.length}</div>
+          </div>
+          <div style={styles.infoItem}>
+            <div style={styles.infoLabel}>Players</div>
+            <div style={styles.infoValue}>{session.players.length}</div>
+          </div>
+          <div style={styles.infoItem}>
+            <div style={styles.infoLabel}>Courts</div>
+            <div style={styles.infoValue}>{session.courts}</div>
+          </div>
+          <div style={styles.infoItem}>
+            <div style={styles.infoLabel}>Sitting out this round</div>
+            <div style={styles.infoValue}>
+              {sitOutNames.length === 0 ? "None" : sitOutNames.join(", ")}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Warning ── */}
+        {!allMatchesComplete && (
+          <div style={styles.warning}>
+            Complete all courts in this round before generating the next one.
+            Mark a court complete once its score is final.
+          </div>
+        )}
+
+        <div style={styles.sectionTitle}>Round {session.currentRound}</div>
+
+        {/* ── Court tiles ── */}
+        {currentRound ? (
+          <div style={styles.grid}>
+            {currentRound.matches.map((m) => {
+              const a1 = nameById.get(m.teamA[0]) ?? "A1";
+              const a2 = nameById.get(m.teamA[1]) ?? "A2";
+              const b1 = nameById.get(m.teamB[0]) ?? "B1";
+              const b2 = nameById.get(m.teamB[1]) ?? "B2";
+
+              const key = matchKey(currentRound.roundNumber, m.courtNumber);
+              const canUndo = (historyByKey[key]?.length ?? 0) > 0;
+              const statusText = m.score.isComplete ? "Complete" : "In play";
+
+              const pA =
+                typeof m.score.pointsA === "number" ? m.score.pointsA : 0;
+              const pB =
+                typeof m.score.pointsB === "number" ? m.score.pointsB : 0;
+              const totalPlayed = pA + pB;
+
+              const firstServe = m.score.firstServeTeam ?? "A";
+              const servingTeam = computeServingTeam(
+                firstServe,
+                totalPlayed,
+                pointsPerMatch
+              );
+
+              return (
+                <div key={m.courtNumber} style={styles.tile}>
+                  <div style={styles.tileHeader}>
+                    <div style={styles.courtTitle}>
+                      Court {m.courtNumber}
+                    </div>
+                    <div
+                      style={{
+                        ...styles.statusPill,
+                        borderColor: m.score.isComplete
+                          ? "rgba(0,168,168,0.55)"
+                          : "rgba(255,255,255,0.14)",
+                      }}
+                    >
+                      {statusText}
+                    </div>
+                  </div>
+
+                  <div style={styles.teamLine}>
+                    Team A: {a1}, {a2}
+                  </div>
+                  <div style={styles.teamLine}>
+                    Team B: {b1}, {b2}
+                  </div>
+
+                  {showServeHelper && (
+                    <div
+                      style={{
+                        ...styles.smallMeta,
+                        color: TEAL,
+                        fontWeight: 1000,
+                      }}
+                    >
+                      Serving: Team {servingTeam} · First serve: Team{" "}
+                      {firstServe}
+                    </div>
+                  )}
+
+                  <div style={styles.pointsRow}>
+                    <div style={styles.pointsBox}>
+                      <div style={styles.boxTitle}>Team A</div>
+                      <div style={styles.bigNums}>{pA}</div>
+                      <div style={styles.controlsRow}>
+                        <button
+                          style={{
+                            ...styles.ctrlBtnPrimary,
+                            opacity: m.score.isComplete ? 0.45 : 1,
+                          }}
+                          onClick={() =>
+                            addPoint(
+                              currentRound.roundNumber,
+                              m.courtNumber,
+                              "A"
+                            )
+                          }
+                          disabled={m.score.isComplete}
+                        >
+                          +1
+                        </button>
+                        <button
+                          style={{
+                            ...styles.ctrlBtn,
+                            opacity: m.score.isComplete ? 0.45 : 1,
+                          }}
+                          onClick={() =>
+                            removePoint(
+                              currentRound.roundNumber,
+                              m.courtNumber,
+                              "A"
+                            )
+                          }
+                          disabled={m.score.isComplete}
+                        >
+                          −1
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={styles.pointsBox}>
+                      <div style={styles.boxTitle}>Team B</div>
+                      <div style={styles.bigNums}>{pB}</div>
+                      <div style={styles.controlsRow}>
+                        <button
+                          style={{
+                            ...styles.ctrlBtnPrimary,
+                            opacity: m.score.isComplete ? 0.45 : 1,
+                          }}
+                          onClick={() =>
+                            addPoint(
+                              currentRound.roundNumber,
+                              m.courtNumber,
+                              "B"
+                            )
+                          }
+                          disabled={m.score.isComplete}
+                        >
+                          +1
+                        </button>
+                        <button
+                          style={{
+                            ...styles.ctrlBtn,
+                            opacity: m.score.isComplete ? 0.45 : 1,
+                          }}
+                          onClick={() =>
+                            removePoint(
+                              currentRound.roundNumber,
+                              m.courtNumber,
+                              "B"
+                            )
+                          }
+                          disabled={m.score.isComplete}
+                        >
+                          −1
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={styles.smallMeta}>
+                    {totalPlayed} of {pointsPerMatch} points played
+                  </div>
+
+                  <div style={styles.tinyRow}>
+                    <button
+                      style={styles.tinyBtn}
+                      onClick={() =>
+                        toggleComplete(
+                          currentRound.roundNumber,
+                          m.courtNumber
+                        )
+                      }
+                    >
+                      {m.score.isComplete ? "Reopen" : "Mark complete"}
+                    </button>
+                    <button
+                      style={{
+                        ...styles.tinyBtn,
+                        opacity: canUndo ? 1 : 0.45,
+                      }}
+                      onClick={() =>
+                        undoMatch(currentRound.roundNumber, m.courtNumber)
+                      }
+                      disabled={!canUndo}
+                    >
+                      Undo
+                    </button>
+                    <button
+                      style={styles.tinyBtn}
+                      onClick={() =>
+                        resetMatch(currentRound.roundNumber, m.courtNumber)
+                      }
+                    >
+                      Reset
+                    </button>
+                  </div>
+
+                  <div style={styles.tinyRow}>
+                    <button
+                      style={styles.tinyBtn}
+                      onClick={() =>
+                        setFirstServe(
+                          currentRound.roundNumber,
+                          m.courtNumber,
+                          "A"
+                        )
+                      }
+                    >
+                      Serve A
+                    </button>
+                    <button
+                      style={styles.tinyBtn}
+                      onClick={() =>
+                        setFirstServe(
+                          currentRound.roundNumber,
+                          m.courtNumber,
+                          "B"
+                        )
+                      }
+                    >
+                      Serve B
+                    </button>
+                    <button
+                      style={styles.tinyBtn}
+                      onClick={() =>
+                        randomFirstServeForMatch(
+                          currentRound.roundNumber,
+                          m.courtNumber
+                        )
+                      }
+                    >
+                      Random
+                    </button>
+                  </div>
+
+                  <div style={styles.hint}>
+                    Leaderboard counts only completed matches. Serve helper
+                    rotates every 4 points.
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={styles.hint}>No round data.</div>
+        )}
+
+        {/* ── Leaderboard ── */}
+        <div style={styles.leaderboardWrap}>
+          <div style={styles.lbHeaderRow}>
+            <div style={styles.lbTitle}>Leaderboard</div>
+            <div style={styles.lbMeta}>
+              {completedMatchCount} of {totalMatchCount} matches completed
+            </div>
+          </div>
+
+          <div style={styles.lbHead}>
+            <div style={{ textAlign: "center" }}>Rank</div>
+            <div>Player</div>
+            <div style={styles.lbCellRight}>Played</div>
+            <div style={styles.lbCellRight}>Points</div>
+            <div style={styles.lbCellRight}>Diff</div>
+          </div>
+
+          <div style={styles.lbGrid}>
+            {leaderboard.map((r, idx) => (
+              <div key={r.playerId} style={rowStyle(idx < 3)}>
+                <div style={styles.lbRank}>{idx + 1}</div>
+                <div style={styles.lbName}>{r.name}</div>
+                <div style={styles.lbNum}>{r.played}</div>
+                <div style={styles.lbNum}>
+                  {r.pointsFor} – {r.pointsAgainst}
+                </div>
+                <div style={styles.lbNum}>
+                  {r.diff > 0 ? `+${r.diff}` : r.diff}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={styles.hint}>
+            Ranked by point difference, then points for. Completed matches only.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
