@@ -13,112 +13,53 @@ const STORAGE_PLAYERS_KEY = "eps_players";
 const STORAGE_SESSION_KEY = "eps_session_active";
 
 type SessionPlayer = { id: string; name: string };
-
-type CourtMatch = {
-  courtNumber: number;
-  teamA: [string, string];
-  teamB: [string, string];
-  score: {
-    setsA: number;
-    setsB: number;
-    gamesA: number;
-    gamesB: number;
-    isComplete: boolean;
-  };
-};
-
+type CourtMatch = { courtNumber: number; teamA: [string, string]; teamB: [string, string]; score: { setsA: number; setsB: number; gamesA: number; gamesB: number; isComplete: boolean } };
 type Round = { roundNumber: number; matches: CourtMatch[] };
+type AmericanoSession = { code: string; createdAtISO: string; courts: number; players: SessionPlayer[]; currentRound: number; rounds: Round[]; pointsPerMatch?: number; servesPerRotation?: number };
 
-type AmericanoSession = {
-  code: string;
-  createdAtISO: string;
-  courts: number;
-  players: SessionPlayer[];
-  currentRound: number;
-  rounds: Round[];
-  pointsPerMatch?: number;
-  servesPerRotation?: number;
-};
-
-function safeParseJSON<T>(value: string | null, fallback: T): T {
-  try {
-    if (!value) return fallback;
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function normalizeName(name: string): string {
-  return name.trim().replace(/\s+/g, " ");
-}
-
-function makeId() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-function makeCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  for (let i = 0; i < 4; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
-}
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
-  }
-  return a;
-}
+function safeParseJSON<T>(v: string | null, fb: T): T { try { if (!v) return fb; return JSON.parse(v) as T; } catch { return fb; } }
+function normalizeName(n: string) { return n.trim().replace(/\s+/g, " "); }
+function makeId() { return Math.random().toString(36).slice(2, 10); }
+function makeCode() { const c = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let o = ""; for (let i = 0; i < 4; i++) o += c[Math.floor(Math.random() * c.length)]; return o; }
+function shuffle<T>(arr: T[]): T[] { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
 function buildRound(players: SessionPlayer[], courts: number, roundNumber: number): Round {
   const mixed = shuffle(players.slice(0, courts * 4));
   const matches: CourtMatch[] = [];
-  for (let c = 0; c < courts; c++) {
-    const b = c * 4;
-    matches.push({
-      courtNumber: c + 1,
-      teamA: [mixed[b].id, mixed[b + 1].id],
-      teamB: [mixed[b + 2].id, mixed[b + 3].id],
-      score: { setsA: 0, setsB: 0, gamesA: 0, gamesB: 0, isComplete: false },
-    });
-  }
+  for (let c = 0; c < courts; c++) { const b = c * 4; matches.push({ courtNumber: c + 1, teamA: [mixed[b].id, mixed[b + 1].id], teamB: [mixed[b + 2].id, mixed[b + 3].id], score: { setsA: 0, setsB: 0, gamesA: 0, gamesB: 0, isComplete: false } }); }
   return { roundNumber, matches };
 }
-const serveChipStyle = (active: boolean): React.CSSProperties => ({
-  borderRadius: 12,
-  padding: "10px 18px",
-  fontSize: 14,
-  fontWeight: 1000,
-  cursor: "pointer",
-  border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
-  background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
-  color: active ? WHITE : WARM_WHITE,
-  whiteSpace: "nowrap" as const,
-});
+
+// Returns [A1, B1, A2, B2] serve point counts for the match
+function serveDistribution(pts: number, spr: number): [number, number, number, number] {
+  const cycle = spr * 4;
+  const full = Math.floor(pts / cycle);
+  const rem = pts % cycle;
+  return [0, 1, 2, 3].map(i => full * spr + Math.min(Math.max(rem - i * spr, 0), spr)) as [number, number, number, number];
+}
+
 const playerChipStyle = (active: boolean): React.CSSProperties => ({
-  borderRadius: 14,
-  padding: 12,
+  borderRadius: 14, padding: 12,
   background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.04)",
   border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.10)",
-  cursor: "pointer",
-  fontWeight: 900,
-  color: active ? WHITE : WARM_WHITE,
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 10,
+  cursor: "pointer", fontWeight: 900, color: active ? WHITE : WARM_WHITE,
+  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+});
+
+const serveChipStyle = (active: boolean): React.CSSProperties => ({
+  borderRadius: 12, padding: "10px 18px", fontSize: 14, fontWeight: 1000, cursor: "pointer",
+  border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
+  background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
+  color: active ? WHITE : WARM_WHITE, whiteSpace: "nowrap" as const,
 });
 
 export default function AmericanoPage() {
   const router = useRouter();
-
   const [loaded, setLoaded] = useState(false);
   const [savedPlayers, setSavedPlayers] = useState<string[]>([]);
   const [session, setSession] = useState<AmericanoSession | null>(null);
   const [courts, setCourts] = useState<number>(2);
+  const [pointsPerMatch, setPointsPerMatch] = useState<number>(21);
   const [servesPerRotation, setServesPerRotation] = useState<number>(4);
   const [pickedNames, setPickedNames] = useState<string[]>([]);
   const [newName, setNewName] = useState("");
@@ -133,57 +74,30 @@ export default function AmericanoPage() {
 
   const minPlayers = useMemo(() => courts * 4, [courts]);
   const selectedCount = useMemo(() => pickedNames.length, [pickedNames]);
+  const dist = useMemo(() => serveDistribution(pointsPerMatch, servesPerRotation), [pointsPerMatch, servesPerRotation]);
 
-  function persistPlayers(next: string[]) {
-    const cleaned = Array.from(new Set(next.map(normalizeName).filter(Boolean)));
-    setSavedPlayers(cleaned);
-    localStorage.setItem(STORAGE_PLAYERS_KEY, JSON.stringify(cleaned));
-  }
+  const serveHint = useMemo(() => {
+    const [a1, b1, a2, b2] = dist;
+    if (a1 === b1 && b1 === a2 && a2 === b2) return { even: true, text: `✓ Equal serves — each player serves ${a1} pts` };
+    return { even: false, text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts` };
+  }, [dist]);
 
-  function addSavedPlayer() {
-    const name = normalizeName(newName);
-    if (!name) return;
-    setNewName("");
-    setError("");
-    persistPlayers([...savedPlayers, name]);
-  }
-
-  function togglePick(name: string) {
-    setError("");
-    setPickedNames((prev) =>
-      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
-    );
-  }
+  function persistPlayers(next: string[]) { const c = Array.from(new Set(next.map(normalizeName).filter(Boolean))); setSavedPlayers(c); localStorage.setItem(STORAGE_PLAYERS_KEY, JSON.stringify(c)); }
+  function addSavedPlayer() { const name = normalizeName(newName); if (!name) return; setNewName(""); setError(""); persistPlayers([...savedPlayers, name]); }
+  function togglePick(name: string) { setError(""); setPickedNames((prev) => prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]); }
 
   function createSession() {
     setError("");
     const unique = Array.from(new Set(pickedNames.map(normalizeName).filter(Boolean)));
-    if (unique.length < minPlayers) {
-      setError(`Select at least ${minPlayers} players for ${courts} court${courts > 1 ? "s" : ""}. Extra players rotate as sit-outs.`);
-      return;
-    }
+    if (unique.length < minPlayers) { setError(`Select at least ${minPlayers} players for ${courts} court${courts > 1 ? "s" : ""}. Extra players rotate as sit-outs.`); return; }
     const players: SessionPlayer[] = unique.map((name) => ({ id: makeId(), name }));
-    const next: AmericanoSession = {
-      code: makeCode(),
-      createdAtISO: new Date().toISOString(),
-      courts,
-      players,
-      currentRound: 1,
-      rounds: [buildRound(players, courts, 1)],
-      pointsPerMatch: 21,
-      servesPerRotation,
-    };
+    const next: AmericanoSession = { code: makeCode(), createdAtISO: new Date().toISOString(), courts, players, currentRound: 1, rounds: [buildRound(players, courts, 1)], pointsPerMatch, servesPerRotation };
     localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(next));
     setSession(next);
     router.push("/americano/session");
   }
 
-  function discardSession() {
-    localStorage.removeItem(STORAGE_SESSION_KEY);
-    setSession(null);
-    setPickedNames([]);
-    setError("");
-  }
+  function discardSession() { localStorage.removeItem(STORAGE_SESSION_KEY); setSession(null); setPickedNames([]); setError(""); }
 
   const styles: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
@@ -197,48 +111,38 @@ export default function AmericanoPage() {
     btn: { borderRadius: 14, padding: "14px 14px", fontSize: 15, fontWeight: 950, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
     btnPrimary: { borderRadius: 14, padding: "14px 18px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" as const },
     btnDanger: { borderRadius: 14, padding: "14px 14px", fontSize: 15, fontWeight: 950, cursor: "pointer", border: "1px solid rgba(255,64,64,0.35)", background: "rgba(255,64,64,0.10)", color: WHITE, whiteSpace: "nowrap" as const },
-    courtCounter: { fontSize: 20, fontWeight: 1000, minWidth: 90, textAlign: "center" as const },
-    counterMeta: { fontSize: 13, color: WARM_WHITE, opacity: 0.55, marginLeft: "auto" },
+    settingsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+    settingBox: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14 },
+    settingLabel: { fontSize: 12, opacity: 0.55, fontWeight: 900, marginBottom: 10 },
+    stepper: { display: "flex", alignItems: "center", gap: 14 },
+    stepBtn: { width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, fontSize: 20, fontWeight: 1000, cursor: "pointer" },
+    stepVal: { fontSize: 22, fontWeight: 1100, minWidth: 36, textAlign: "center" as const },
     grid: { display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
     divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "16px 0" },
     small: { fontSize: 12, color: WARM_WHITE, opacity: 0.55, marginTop: 6, lineHeight: 1.35 },
     activeSessionCode: { fontSize: 22, fontWeight: 1000, color: ORANGE, letterSpacing: 2 },
     activeSessionMeta: { fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 },
     error: { marginTop: 12, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
-      };
+    hintEven: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
+    hintOdd: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
+  };
 
-  if (!loaded) {
-    return (
-      <div style={styles.page}>
-        <div style={styles.card}>
-          <div style={{ opacity: 0.7, fontWeight: 900 }}>Loading…</div>
-        </div>
-      </div>
-    );
-  }
+  if (!loaded) return <div style={styles.page}><div style={styles.card}><div style={{ opacity: 0.7, fontWeight: 900 }}>Loading…</div></div></div>;
 
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-
-        {/* Header */}
         <div style={styles.titleRow}>
-          <div>
-            <div style={styles.title}>Mixed Americano</div>
-            <div style={styles.subtitle}>Rotating partners · Points-based scoring</div>
-          </div>
+          <div><div style={styles.title}>Mixed Americano</div><div style={styles.subtitle}>Rotating partners · Points-based scoring</div></div>
           <button style={styles.btn} onClick={() => router.push("/")}>Home</button>
         </div>
-
         <div style={styles.divider} />
 
         {session ? (
           <>
             <div style={styles.sectionLabel}>Active session</div>
             <div style={styles.activeSessionCode}>{session.code}</div>
-            <div style={styles.activeSessionMeta}>
-              {session.players.length} players · {session.courts} court{session.courts > 1 ? "s" : ""}
-            </div>
+            <div style={styles.activeSessionMeta}>{session.players.length} players · {session.courts} court{session.courts > 1 ? "s" : ""}</div>
             <div style={styles.small}>Stored on this device.</div>
             <div style={{ ...styles.row, marginTop: 14 }}>
               <button style={styles.btnPrimary} onClick={() => router.push("/americano/session")}>Open session</button>
@@ -247,14 +151,27 @@ export default function AmericanoPage() {
           </>
         ) : (
           <>
-            {/* Courts */}
-            <div style={styles.sectionLabel}>Courts</div>
-            <div style={styles.row}>
-              <button style={styles.btn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
-              <div style={styles.courtCounter}>{courts} {courts === 1 ? "court" : "courts"}</div>
-              <button style={styles.btn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
-              <div style={styles.counterMeta}>Min {minPlayers} players · {selectedCount} selected</div>
+            {/* Courts + Points */}
+            <div style={styles.sectionLabel}>Match settings</div>
+            <div style={styles.settingsGrid}>
+              <div style={styles.settingBox}>
+                <div style={styles.settingLabel}>Courts</div>
+                <div style={styles.stepper}>
+                  <button style={styles.stepBtn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
+                  <div style={styles.stepVal}>{courts}</div>
+                  <button style={styles.stepBtn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
+                </div>
+              </div>
+              <div style={styles.settingBox}>
+                <div style={styles.settingLabel}>Points per match</div>
+                <div style={styles.stepper}>
+                  <button style={styles.stepBtn} onClick={() => setPointsPerMatch((p) => Math.max(8, p - 1))}>−</button>
+                  <div style={styles.stepVal}>{pointsPerMatch}</div>
+                  <button style={styles.stepBtn} onClick={() => setPointsPerMatch((p) => Math.min(99, p + 1))}>+</button>
+                </div>
+              </div>
             </div>
+            <div style={styles.small}>Min {minPlayers} players · {selectedCount} selected</div>
 
             <div style={styles.divider} />
 
@@ -262,32 +179,22 @@ export default function AmericanoPage() {
             <div style={styles.sectionLabel}>Serves before rotation</div>
             <div style={styles.row}>
               {[2, 4].map((n) => (
-                  <div key={n} style={serveChipStyle(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>
-                  {n} points per serve
-                </div>
+                <div key={n} style={serveChipStyle(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>{n} pts per serve</div>
               ))}
             </div>
-            <div style={styles.small}>
-              How many consecutive points each player serves before the serve passes on. 4 is standard.
-            </div>
+            <div style={serveHint.even ? styles.hintEven : styles.hintOdd}>{serveHint.text}</div>
+            <div style={styles.small}>Serve order per match: A1 → B1 → A2 → B2, cycling every {servesPerRotation} pts.</div>
 
             <div style={styles.divider} />
 
             {/* Add player */}
             <div style={styles.sectionLabel}>Add player</div>
             <div style={styles.row}>
-              <input
-                style={styles.input}
-                value={newName}
-                placeholder="Player name"
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") addSavedPlayer(); }}
-              />
+              <input style={styles.input} value={newName} placeholder="Player name" onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addSavedPlayer(); }} />
               <button style={styles.btnPrimary} onClick={addSavedPlayer}>Add</button>
             </div>
             <div style={styles.small}>Names saved locally and reused across sessions.</div>
 
-            {/* Player grid */}
             <div style={styles.sectionLabel}>Select players</div>
             {savedPlayers.length === 0 ? (
               <div style={styles.small}>Add players above to get started.</div>
@@ -305,19 +212,11 @@ export default function AmericanoPage() {
               </div>
             )}
 
-            {/* Actions */}
             <div style={{ ...styles.row, marginTop: 16 }}>
               <button style={styles.btn} onClick={() => { setPickedNames([]); setError(""); }}>Clear</button>
               <div style={{ flex: 1 }} />
-              <button
-                style={{ ...styles.btnPrimary, opacity: selectedCount >= minPlayers ? 1 : 0.4 }}
-                onClick={createSession}
-                disabled={selectedCount < minPlayers}
-              >
-                Create session
-              </button>
+              <button style={{ ...styles.btnPrimary, opacity: selectedCount >= minPlayers ? 1 : 0.4 }} onClick={createSession} disabled={selectedCount < minPlayers}>Create session</button>
             </div>
-
             {error && <div style={styles.error}>{error}</div>}
           </>
         )}
