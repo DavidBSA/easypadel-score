@@ -218,12 +218,12 @@ export default function AmericanoSessionPage() {
     if (!editingScore || !session) return;
     const { rn, cn, team } = editingScore;
     const val = parseInt(editDraft, 10);
-    if (!isNaN(val) && val >= 0) {
+    if (!isNaN(val) && val >= 0 && val <= pointsPerMatch) {
+      const other = pointsPerMatch - val;
       updateMatchScore(rn, cn, (s) => {
-        const cur = { pA: typeof s.pointsA === "number" ? s.pointsA : 0, pB: typeof s.pointsB === "number" ? s.pointsB : 0 };
-        const nA = team === "A" ? clamp(val, 0, pointsPerMatch) : cur.pA;
-        const nB = team === "B" ? clamp(val, 0, pointsPerMatch) : cur.pB;
-        return { ...s, pointsA: nA, pointsB: nB, isComplete: nA + nB >= pointsPerMatch };
+        const nA = team === "A" ? val : other;
+        const nB = team === "B" ? val : other;
+        return { ...s, pointsA: nA, pointsB: nB, isComplete: true };
       });
     }
     setEditingScore(null); setEditDraft("");
