@@ -119,6 +119,7 @@ function computeServingTeam(first: Team, totalPlayed: number, pointsPerMatch: nu
 
 const PARTNER_PENALTY = 3;
 const OPPONENT_PENALTY = 1;
+const COURT_PENALTY = 1;
 const GENERATOR_ATTEMPTS = 200;
 
 function buildNextRound(session: AmericanoSession): AmericanoSession {
@@ -129,10 +130,13 @@ function buildNextRound(session: AmericanoSession): AmericanoSession {
   const partnerCount = new Map<string, Map<string, number>>();
   const opponentCount = new Map<string, Map<string, number>>();
   const sitOutCount = new Map<string, number>();
+  // Track how many times each player has played on each court number
+  const courtPlayCount = new Map<string, Map<number, number>>();
   for (const p of players) {
     partnerCount.set(p.id, new Map());
     opponentCount.set(p.id, new Map());
     sitOutCount.set(p.id, 0);
+    courtPlayCount.set(p.id, new Map());
   }
 
   let lastRoundSitOutIds = new Set<string>();
@@ -143,6 +147,11 @@ function buildNextRound(session: AmericanoSession): AmericanoSession {
       addPairCount(partnerCount, m.teamA[0], m.teamA[1]);
       addPairCount(partnerCount, m.teamB[0], m.teamB[1]);
       for (const a of m.teamA) for (const b of m.teamB) addPairCount(opponentCount, a, b);
+      // Record court history for all four players in this match
+      for (const pid of [m.teamA[0], m.teamA[1], m.teamB[0], m.teamB[1]]) {
+        const counts = courtPlayCount.get(pid)!;
+        counts.set(m.courtNumber, (counts.get(m.courtNumber) ?? 0) + 1);
+      }
     }
     const roundSitOuts = new Set<string>();
     for (const p of players) {
@@ -171,6 +180,10 @@ function buildNextRound(session: AmericanoSession): AmericanoSession {
       score += (partnerCount.get(m.teamA[0])?.get(m.teamA[1]) ?? 0) * PARTNER_PENALTY;
       score += (partnerCount.get(m.teamB[0])?.get(m.teamB[1]) ?? 0) * PARTNER_PENALTY;
       for (const a of m.teamA) for (const b of m.teamB) score += (opponentCount.get(a)?.get(b) ?? 0) * OPPONENT_PENALTY;
+      // Court rotation: penalise assigning a player to a court they've used before
+      for (const pid of [...m.teamA, ...m.teamB]) {
+        score += (courtPlayCount.get(pid)?.get(m.courtNumber) ?? 0) * COURT_PENALTY;
+      }
     }
     return score;
   }
@@ -483,7 +496,7 @@ export default function AmericanoSessionPage() {
             </div>
             <button style={styles.btn} onClick={() => router.push("/americano")}>Back</button>
           </div>
-          <div style={styles.hint} >Create a session from the Americano screen.</div>
+          <div style={styles.hint}>Create a session from the Americano screen.</div>
         </div>
       </div>
     );
