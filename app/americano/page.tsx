@@ -15,7 +15,7 @@ const STORAGE_SESSION_KEY = "eps_session_active";
 type SessionPlayer = { id: string; name: string };
 type CourtMatch = { courtNumber: number; teamA: [string, string]; teamB: [string, string]; score: { setsA: number; setsB: number; gamesA: number; gamesB: number; isComplete: boolean } };
 type Round = { roundNumber: number; matches: CourtMatch[] };
-type AmericanoSession = { code: string; createdAtISO: string; courts: number; players: SessionPlayer[]; currentRound: number; rounds: Round[]; pointsPerMatch?: number; servesPerRotation?: number };
+type AmericanoSession = { code: string; createdAtISO: string; courts: number; players: SessionPlayer[]; currentRound: number; rounds: Round[]; pointsPerMatch?: number };
 
 function safeParseJSON<T>(v: string | null, fb: T): T { try { if (!v) return fb; return JSON.parse(v) as T; } catch { return fb; } }
 function normalizeName(n: string) { return n.trim().replace(/\s+/g, " "); }
@@ -30,12 +30,30 @@ function buildRound(players: SessionPlayer[], courts: number, roundNumber: numbe
   return { roundNumber, matches };
 }
 
-// Returns [A1, B1, A2, B2] serve point counts for the match
-function serveDistribution(pts: number, spr: number): [number, number, number, number] {
-  const cycle = spr * 4;
-  const full = Math.floor(pts / cycle);
-  const rem = pts % cycle;
-  return [0, 1, 2, 3].map(i => full * spr + Math.min(Math.max(rem - i * spr, 0), spr)) as [number, number, number, number];
+// Equal-distribution: last `remainder` players each get +1 serve
+// Order: A1=0, B1=1, A2=2, B2=3
+// remainder=1 → B2 gets extra; rem=2 → A2+B2; rem=3 → B1+A2+B2
+function serveDistribution(pts: number): [number, number, number, number] {
+  const base = Math.floor(pts / 4);
+  const rem = pts % 4;
+  return [
+    base + (rem >= 4 ? 1 : 0), // A1 — never gets extra (rem is 0-3)
+    base + (rem >= 3 ? 1 : 0), // B1
+    base + (rem >= 2 ? 1 : 0), // A2
+    base + (rem >= 1 ? 1 : 0), // B2
+  ] as [number, number, number, number];
+}
+
+function serveHintText(pts: number): { even: boolean; text: string } {
+  const [a1, b1, a2, b2] = serveDistribution(pts);
+  if (a1 === b1 && b1 === a2 && a2 === b2) {
+    const rotations = Math.floor(a1 / 4);
+    const extra = a1 % 4;
+    const rotStr = rotations > 1 ? `${rotations} × 4 serves` : rotations === 1 && extra === 0 ? `1 × 4 serves` : `${a1} serves`;
+    const label = rotations >= 2 && extra === 0 ? `${rotStr} each (${rotations} full rotations)` : `each player serves ${a1} pts`;
+    return { even: true, text: `✓ Equal — ${label}` };
+  }
+  return { even: false, text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts` };
 }
 
 const playerChipStyle = (active: boolean): React.CSSProperties => ({
@@ -46,13 +64,6 @@ const playerChipStyle = (active: boolean): React.CSSProperties => ({
   display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
 });
 
-const serveChipStyle = (active: boolean): React.CSSProperties => ({
-  borderRadius: 12, padding: "10px 18px", fontSize: 14, fontWeight: 1000, cursor: "pointer",
-  border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
-  background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
-  color: active ? WHITE : WARM_WHITE, whiteSpace: "nowrap" as const,
-});
-
 export default function AmericanoPage() {
   const router = useRouter();
   const [loaded, setLoaded] = useState(false);
@@ -60,7 +71,6 @@ export default function AmericanoPage() {
   const [session, setSession] = useState<AmericanoSession | null>(null);
   const [courts, setCourts] = useState<number>(2);
   const [pointsPerMatch, setPointsPerMatch] = useState<number>(21);
-  const [servesPerRotation, setServesPerRotation] = useState<number>(4);
   const [pickedNames, setPickedNames] = useState<string[]>([]);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
@@ -74,13 +84,7 @@ export default function AmericanoPage() {
 
   const minPlayers = useMemo(() => courts * 4, [courts]);
   const selectedCount = useMemo(() => pickedNames.length, [pickedNames]);
-  const dist = useMemo(() => serveDistribution(pointsPerMatch, servesPerRotation), [pointsPerMatch, servesPerRotation]);
-
-  const serveHint = useMemo(() => {
-    const [a1, b1, a2, b2] = dist;
-    if (a1 === b1 && b1 === a2 && a2 === b2) return { even: true, text: `✓ Equal serves — each player serves ${a1} pts` };
-    return { even: false, text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts` };
-  }, [dist]);
+  const hint = useMemo(() => serveHintText(pointsPerMatch), [pointsPerMatch]);
 
   function persistPlayers(next: string[]) { const c = Array.from(new Set(next.map(normalizeName).filter(Boolean))); setSavedPlayers(c); localStorage.setItem(STORAGE_PLAYERS_KEY, JSON.stringify(c)); }
   function addSavedPlayer() { const name = normalizeName(newName); if (!name) return; setNewName(""); setError(""); persistPlayers([...savedPlayers, name]); }
@@ -91,7 +95,7 @@ export default function AmericanoPage() {
     const unique = Array.from(new Set(pickedNames.map(normalizeName).filter(Boolean)));
     if (unique.length < minPlayers) { setError(`Select at least ${minPlayers} players for ${courts} court${courts > 1 ? "s" : ""}. Extra players rotate as sit-outs.`); return; }
     const players: SessionPlayer[] = unique.map((name) => ({ id: makeId(), name }));
-    const next: AmericanoSession = { code: makeCode(), createdAtISO: new Date().toISOString(), courts, players, currentRound: 1, rounds: [buildRound(players, courts, 1)], pointsPerMatch, servesPerRotation };
+    const next: AmericanoSession = { code: makeCode(), createdAtISO: new Date().toISOString(), courts, players, currentRound: 1, rounds: [buildRound(players, courts, 1)], pointsPerMatch };
     localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(next));
     setSession(next);
     router.push("/americano/session");
@@ -117,14 +121,17 @@ export default function AmericanoPage() {
     stepper: { display: "flex", alignItems: "center", gap: 14 },
     stepBtn: { width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, fontSize: 20, fontWeight: 1000, cursor: "pointer" },
     stepVal: { fontSize: 22, fontWeight: 1100, minWidth: 36, textAlign: "center" as const },
+    serveCard: { borderRadius: 14, padding: "12px 14px", marginTop: 4 },
+    serveCardEven: { background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)" },
+    serveCardOdd: { background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)" },
+    serveCardText: { fontSize: 13, fontWeight: 900, color: WHITE },
+    serveCardSub: { fontSize: 12, opacity: 0.6, marginTop: 4, color: WARM_WHITE },
     grid: { display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
     divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "16px 0" },
     small: { fontSize: 12, color: WARM_WHITE, opacity: 0.55, marginTop: 6, lineHeight: 1.35 },
     activeSessionCode: { fontSize: 22, fontWeight: 1000, color: ORANGE, letterSpacing: 2 },
     activeSessionMeta: { fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 },
     error: { marginTop: 12, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
-    hintEven: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
-    hintOdd: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
   };
 
   if (!loaded) return <div style={styles.page}><div style={styles.card}><div style={{ opacity: 0.7, fontWeight: 900 }}>Loading…</div></div></div>;
@@ -151,7 +158,6 @@ export default function AmericanoPage() {
           </>
         ) : (
           <>
-            {/* Courts + Points */}
             <div style={styles.sectionLabel}>Match settings</div>
             <div style={styles.settingsGrid}>
               <div style={styles.settingBox}>
@@ -175,19 +181,14 @@ export default function AmericanoPage() {
 
             <div style={styles.divider} />
 
-            {/* Serves per rotation */}
-            <div style={styles.sectionLabel}>Serves before rotation</div>
-            <div style={styles.row}>
-              {[2, 4].map((n) => (
-                <div key={n} style={serveChipStyle(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>{n} pts per serve</div>
-              ))}
+            <div style={styles.sectionLabel}>Serve rotation</div>
+            <div style={{ ...styles.serveCard, ...(hint.even ? styles.serveCardEven : styles.serveCardOdd) }}>
+              <div style={styles.serveCardText}>{hint.text}</div>
+              <div style={styles.serveCardSub}>Serve order: A1 → B1 → A2 → B2</div>
             </div>
-            <div style={serveHint.even ? styles.hintEven : styles.hintOdd}>{serveHint.text}</div>
-            <div style={styles.small}>Serve order per match: A1 → B1 → A2 → B2, cycling every {servesPerRotation} pts.</div>
 
             <div style={styles.divider} />
 
-            {/* Add player */}
             <div style={styles.sectionLabel}>Add player</div>
             <div style={styles.row}>
               <input style={styles.input} value={newName} placeholder="Player name" onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addSavedPlayer(); }} />

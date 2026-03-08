@@ -25,7 +25,7 @@ type Round = { roundNumber: number; matches: CourtMatch[] };
 
 type AmericanoSession = {
   code: string; createdAtISO: string; courts: number; players: SessionPlayer[];
-  currentRound: number; rounds: Round[]; pointsPerMatch?: number; servesPerRotation?: number;
+  currentRound: number; rounds: Round[]; pointsPerMatch?: number;
 };
 
 type Score = CourtMatch["score"];
@@ -35,29 +35,49 @@ type LeaderRow = { playerId: string; name: string; played: number; pointsFor: nu
 function safeParseJSON<T>(v: string | null, fb: T): T { try { if (!v) return fb; return JSON.parse(v) as T; } catch { return fb; } }
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
 function shallowSnapshot(s: Score): MatchSnapshot { return { setsA: s.setsA, setsB: s.setsB, gamesA: s.gamesA, gamesB: s.gamesB, pointsA: s.pointsA, pointsB: s.pointsB, firstServeTeam: s.firstServeTeam, isComplete: s.isComplete }; }
-function otherTeam(t: Team): Team { return t === "A" ? "B" : "A"; }
 function shuffle<T>(arr: T[]): T[] { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function addPairCount(map: Map<string, Map<string, number>>, a: string, b: string) {
   if (!map.has(a)) map.set(a, new Map()); if (!map.has(b)) map.set(b, new Map());
   map.get(a)!.set(b, (map.get(a)!.get(b) ?? 0) + 1); map.get(b)!.set(a, (map.get(b)!.get(a) ?? 0) + 1);
 }
 
-// Returns [A1, B1, A2, B2] serve point counts
-function serveDistribution(pts: number, spr: number): [number, number, number, number] {
-  const cycle = spr * 4; const full = Math.floor(pts / cycle); const rem = pts % cycle;
-  return [0, 1, 2, 3].map(i => full * spr + Math.min(Math.max(rem - i * spr, 0), spr)) as [number, number, number, number];
+// Equal-distribution: remainder serves go to last players in order
+// Order: A1=pos0, B1=pos1, A2=pos2, B2=pos3
+// rem=1 → B2 gets +1; rem=2 → A2+B2; rem=3 → B1+A2+B2
+function serveDistribution(pts: number): [number, number, number, number] {
+  const base = Math.floor(pts / 4);
+  const rem = pts % 4;
+  return [
+    base,                       // A1 — never gets extra
+    base + (rem >= 3 ? 1 : 0), // B1
+    base + (rem >= 2 ? 1 : 0), // A2
+    base + (rem >= 1 ? 1 : 0), // B2
+  ] as [number, number, number, number];
 }
 
-// Returns which player is currently serving as { team, playerSlot: 0|1 }
-// Slot 0 = first player listed on that team, slot 1 = second
-// Serve order if first="A": A0, B0, A1, B1
-// Serve order if first="B": B0, A0, B1, A1
-function computeCurrentServer(first: Team, totalPlayed: number, spr: number): { team: Team; slot: 0 | 1 } {
-  const pos = Math.floor(totalPlayed / spr) % 4;
+function serveHintText(pts: number): { even: boolean; text: string } {
+  const [a1, b1, a2, b2] = serveDistribution(pts);
+  if (a1 === b1 && b1 === a2 && a2 === b2) {
+    const rotations = Math.floor(a1 / 4);
+    const extra = a1 % 4;
+    const rotStr = rotations > 1 ? `${rotations} × 4 serves` : rotations === 1 && extra === 0 ? `1 × 4 serves` : `${a1} serves`;
+    const label = rotations >= 2 && extra === 0 ? `${rotStr} each (${rotations} full rotations)` : `each player serves ${a1} pts`;
+    return { even: true, text: `✓ Equal — ${label}` };
+  }
+  return { even: false, text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts` };
+}
+
+// Cumulative threshold: find which player's bucket totalPlayed falls into
+function computeCurrentServer(first: Team, totalPlayed: number, dist: [number, number, number, number]): { team: Team; slot: 0 | 1 } {
   const order: { team: Team; slot: 0 | 1 }[] = first === "A"
     ? [{ team: "A", slot: 0 }, { team: "B", slot: 0 }, { team: "A", slot: 1 }, { team: "B", slot: 1 }]
     : [{ team: "B", slot: 0 }, { team: "A", slot: 0 }, { team: "B", slot: 1 }, { team: "A", slot: 1 }];
-  return order[pos];
+  let cumulative = 0;
+  for (let i = 0; i < 4; i++) {
+    cumulative += dist[i];
+    if (totalPlayed < cumulative) return order[i];
+  }
+  return order[3]; // match complete
 }
 
 // ─── Round Generator ──────────────────────────────────────────────────────────
@@ -119,7 +139,7 @@ export default function AmericanoSessionPage() {
   useEffect(() => {
     const s = safeParseJSON<AmericanoSession | null>(localStorage.getItem(STORAGE_SESSION_KEY), null);
     if (s) {
-      const migrated: AmericanoSession = { ...s, pointsPerMatch: typeof s.pointsPerMatch === "number" ? s.pointsPerMatch : 21, servesPerRotation: typeof s.servesPerRotation === "number" ? s.servesPerRotation : 4, rounds: s.rounds.map((r) => ({ ...r, matches: r.matches.map((m) => ({ ...m, score: { ...m.score, pointsA: typeof m.score.pointsA === "number" ? m.score.pointsA : 0, pointsB: typeof m.score.pointsB === "number" ? m.score.pointsB : 0, firstServeTeam: m.score.firstServeTeam ?? "A" } })) })) };
+      const migrated: AmericanoSession = { ...s, pointsPerMatch: typeof s.pointsPerMatch === "number" ? s.pointsPerMatch : 21, rounds: s.rounds.map((r) => ({ ...r, matches: r.matches.map((m) => ({ ...m, score: { ...m.score, pointsA: typeof m.score.pointsA === "number" ? m.score.pointsA : 0, pointsB: typeof m.score.pointsB === "number" ? m.score.pointsB : 0, firstServeTeam: m.score.firstServeTeam ?? "A" } })) })) };
       localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(migrated)); setSession(migrated);
     } else { setSession(null); }
     setLoaded(true);
@@ -131,13 +151,8 @@ export default function AmericanoSessionPage() {
   const currentRoundIndex = useMemo(() => { if (!session) return 0; const idx = roundNumbers.indexOf(session.currentRound); return idx >= 0 ? idx : 0; }, [roundNumbers, session]);
   const isLastRound = useMemo(() => currentRoundIndex >= roundNumbers.length - 1, [currentRoundIndex, roundNumbers]);
   const pointsPerMatch = useMemo(() => session?.pointsPerMatch ?? 21, [session]);
-  const servesPerRotation = useMemo(() => session?.servesPerRotation ?? 4, [session]);
 
-  const serveHint = useMemo(() => {
-    const [a1, b1, a2, b2] = serveDistribution(pointsPerMatch, servesPerRotation);
-    if (a1 === b1 && b1 === a2 && a2 === b2) return { even: true, text: `✓ Equal serves — each player serves ${a1} pts` };
-    return { even: false, text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts` };
-  }, [pointsPerMatch, servesPerRotation]);
+  const serveHint = useMemo(() => serveHintText(pointsPerMatch), [pointsPerMatch]);
 
   const allMatchesComplete = useMemo(() => { if (!currentRound) return false; return currentRound.matches.every((m) => m.score.isComplete); }, [currentRound]);
   const currentRoundSitOuts = useMemo(() => {
@@ -224,13 +239,13 @@ export default function AmericanoSessionPage() {
     settingsRow: { marginTop: 12, borderRadius: 16, padding: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 12, flexWrap: "wrap" as const, alignItems: "flex-start", justifyContent: "space-between" },
     inputStyle: { width: 100, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "12px", fontSize: 16, outline: "none", fontWeight: 900, textAlign: "center" as const },
     chip: { borderRadius: 999, padding: "10px 14px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: WHITE, fontWeight: 950, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const, fontSize: 13 },
+    serveHintEven: { borderRadius: 12, padding: "8px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE, width: "100%" },
+    serveHintOdd: { borderRadius: 12, padding: "8px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE, width: "100%" },
     infoCard: { marginTop: 12, borderRadius: 14, padding: "12px 16px", background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)", display: "flex", gap: 20, flexWrap: "wrap" as const, alignItems: "center" },
     infoItem: { display: "grid", gap: 2 },
     infoLabel: { fontSize: 11, opacity: 0.6, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: 0.5 },
     infoValue: { fontSize: 15, fontWeight: 1050 },
     warning: { marginTop: 10, borderRadius: 14, padding: 12, background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.24)", fontSize: 12, fontWeight: 900, lineHeight: 1.35, color: WHITE },
-    hintEven: { marginTop: 8, borderRadius: 12, padding: "8px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE, width: "100%" },
-    hintOdd: { marginTop: 8, borderRadius: 12, padding: "8px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE, width: "100%" },
     grid: { display: "grid", gap: 12, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
     tile: { borderRadius: 18, padding: 14, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 10 },
     tileHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
@@ -271,21 +286,19 @@ export default function AmericanoSessionPage() {
   );
 
   const sitOutNames = currentRoundSitOuts.map((p) => p.name);
-  const nextRoundLabel = isLastRound ? "Generate next round" : "Next round →";
 
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-
         <div style={styles.titleRow}>
           <div>
             <div style={styles.title}>Session {session.code}</div>
-            <div style={styles.subtitle}>Round {session.currentRound} · {session.courts} court{session.courts > 1 ? "s" : ""} · {pointsPerMatch} pts · {servesPerRotation} pts/serve</div>
+            <div style={styles.subtitle}>Round {session.currentRound} · {session.courts} court{session.courts > 1 ? "s" : ""} · {pointsPerMatch} pts</div>
           </div>
           <div style={styles.topControls}>
             <button style={styles.btn} onClick={() => router.push("/americano")}>Settings</button>
             <button style={{ ...styles.btn, opacity: currentRoundIndex <= 0 ? 0.4 : 1 }} onClick={goPrevRound} disabled={currentRoundIndex <= 0}>← Prev</button>
-            <button style={{ ...styles.btnPrimary, opacity: allMatchesComplete ? 1 : 0.4 }} onClick={goNextRound} disabled={!allMatchesComplete}>{nextRoundLabel}</button>
+            <button style={{ ...styles.btnPrimary, opacity: allMatchesComplete ? 1 : 0.4 }} onClick={goNextRound} disabled={!allMatchesComplete}>{isLastRound ? "Generate next round" : "Next round →"}</button>
           </div>
         </div>
 
@@ -296,7 +309,7 @@ export default function AmericanoSessionPage() {
             <div style={{ ...styles.chip, borderColor: showServeHelper ? "rgba(255,107,0,0.55)" : "rgba(255,255,255,0.14)", background: showServeHelper ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.06)" }} onClick={() => setShowServeHelper((v) => !v)}>Serve helper</div>
             <div style={styles.chip} onClick={randomFirstServeForRound}>Random first serve</div>
           </div>
-          <div style={serveHint.even ? styles.hintEven : styles.hintOdd}>{serveHint.text}</div>
+          <div style={serveHint.even ? styles.serveHintEven : styles.serveHintOdd}>{serveHint.text}</div>
         </div>
 
         <div style={styles.infoCard}>
@@ -306,7 +319,7 @@ export default function AmericanoSessionPage() {
           <div style={styles.infoItem}><div style={styles.infoLabel}>Sitting out</div><div style={styles.infoValue}>{sitOutNames.length === 0 ? "None" : sitOutNames.join(", ")}</div></div>
         </div>
 
-        {!allMatchesComplete && <div style={styles.warning}>Complete all courts before generating the next round. Mark each court complete once the score is final.</div>}
+        {!allMatchesComplete && <div style={styles.warning}>Complete all courts before generating the next round.</div>}
 
         <div style={styles.sectionLabel}>Round {session.currentRound}</div>
 
@@ -321,8 +334,9 @@ export default function AmericanoSessionPage() {
               const pB = typeof m.score.pointsB === "number" ? m.score.pointsB : 0;
               const totalPlayed = pA + pB;
               const firstServe = m.score.firstServeTeam ?? "A";
-              const server = computeCurrentServer(firstServe, totalPlayed, servesPerRotation);
-              const playerNames = { A: [a1, a2], B: [b1, b2] };
+              const dist = serveDistribution(pointsPerMatch);
+              const server = computeCurrentServer(firstServe, totalPlayed, dist);
+              const playerNames: Record<Team, string[]> = { A: [a1, a2], B: [b1, b2] };
               const servingPlayerName = playerNames[server.team][server.slot];
               const firstServePlayerName = firstServe === "A" ? a1 : b1;
 
@@ -375,7 +389,7 @@ export default function AmericanoSessionPage() {
                     <button style={styles.tinyBtn} onClick={() => randomFirstServeForMatch(currentRound.roundNumber, m.courtNumber)}>Random</button>
                   </div>
 
-                  <div style={styles.hint}>Serve rotates every {servesPerRotation} pts: {a1} → {b1} → {a2} → {b2}</div>
+                  <div style={styles.hint}>Serve order: {a1} → {b1} → {a2} → {b2} · {dist[0]}:{dist[1]}:{dist[2]}:{dist[3]} pts</div>
                 </div>
               );
             })}

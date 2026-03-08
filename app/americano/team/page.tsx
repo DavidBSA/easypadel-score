@@ -14,7 +14,7 @@ const STORAGE_KEY = "eps_team_session_active";
 type TeamPair = { id: string; name: string; player1: string; player2: string };
 type CourtMatch = { courtNumber: number; teamA: string; teamB: string; score: { pointsA: number; pointsB: number; firstServeTeam?: "A" | "B"; isComplete: boolean } };
 type TeamRound = { roundNumber: number; matches: CourtMatch[] };
-type TeamSession = { code: string; createdAtISO: string; courts: number; teams: TeamPair[]; currentRound: number; rounds: TeamRound[]; pointsPerMatch: number; servesPerRotation: number };
+type TeamSession = { code: string; createdAtISO: string; courts: number; teams: TeamPair[]; currentRound: number; rounds: TeamRound[]; pointsPerMatch: number };
 
 function safeParseJSON<T>(v: string | null, fb: T): T { try { if (!v) return fb; return JSON.parse(v) as T; } catch { return fb; } }
 function makeId() { return Math.random().toString(36).slice(2, 10); }
@@ -31,19 +31,30 @@ function buildRound(teams: TeamPair[], courts: number, roundNumber: number): Tea
   return { roundNumber, matches };
 }
 
-// Returns [A1, B1, A2, B2] serve point counts
-// A1 = team A player 1, B1 = team B player 1, A2 = team A player 2, B2 = team B player 2
-function serveDistribution(pts: number, spr: number): [number, number, number, number] {
-  const cycle = spr * 4; const full = Math.floor(pts / cycle); const rem = pts % cycle;
-  return [0, 1, 2, 3].map(i => full * spr + Math.min(Math.max(rem - i * spr, 0), spr)) as [number, number, number, number];
+// Equal-distribution: remainder serves go to last players in order
+// Order: P1(A)=pos0, P1(B)=pos1, P2(A)=pos2, P2(B)=pos3
+function serveDistribution(pts: number): [number, number, number, number] {
+  const base = Math.floor(pts / 4);
+  const rem = pts % 4;
+  return [
+    base,
+    base + (rem >= 3 ? 1 : 0),
+    base + (rem >= 2 ? 1 : 0),
+    base + (rem >= 1 ? 1 : 0),
+  ] as [number, number, number, number];
 }
 
-const serveChipStyle = (active: boolean): React.CSSProperties => ({
-  borderRadius: 12, padding: "10px 18px", fontSize: 14, fontWeight: 1000, cursor: "pointer",
-  border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
-  background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
-  color: active ? WHITE : WARM_WHITE, whiteSpace: "nowrap" as const,
-});
+function serveHintText(pts: number): { even: boolean; text: string } {
+  const [a1, b1, a2, b2] = serveDistribution(pts);
+  if (a1 === b1 && b1 === a2 && a2 === b2) {
+    const rotations = Math.floor(a1 / 4);
+    const extra = a1 % 4;
+    const rotStr = rotations > 1 ? `${rotations} × 4 serves` : rotations === 1 && extra === 0 ? `1 × 4 serves` : `${a1} serves`;
+    const label = rotations >= 2 && extra === 0 ? `${rotStr} each (${rotations} full rotations)` : `each player serves ${a1} pts`;
+    return { even: true, text: `✓ Equal — ${label}` };
+  }
+  return { even: false, text: `P1(A): ${a1} pts · P1(B): ${b1} pts · P2(A): ${a2} pts · P2(B): ${b2} pts` };
+}
 
 export default function TeamAmericanoPage() {
   const router = useRouter();
@@ -51,7 +62,6 @@ export default function TeamAmericanoPage() {
   const [session, setSession] = useState<TeamSession | null>(null);
   const [courts, setCourts] = useState(2);
   const [pointsPerMatch, setPointsPerMatch] = useState(21);
-  const [servesPerRotation, setServesPerRotation] = useState(4);
   const [teamInputs, setTeamInputs] = useState<{ name: string; player1: string; player2: string }[]>(
     Array.from({ length: 8 }, () => ({ name: "", player1: "", player2: "" }))
   );
@@ -63,13 +73,7 @@ export default function TeamAmericanoPage() {
   }, []);
 
   const minTeams = useMemo(() => courts * 2, [courts]);
-
-  const dist = useMemo(() => serveDistribution(pointsPerMatch, servesPerRotation), [pointsPerMatch, servesPerRotation]);
-  const serveHint = useMemo(() => {
-    const [a1, b1, a2, b2] = dist;
-    if (a1 === b1 && b1 === a2 && a2 === b2) return { even: true, text: `✓ Equal serves — each player serves ${a1} pts` };
-    return { even: false, text: `Player 1 (Team A): ${a1} pts · Player 1 (Team B): ${b1} pts · Player 2 (Team A): ${a2} pts · Player 2 (Team B): ${b2} pts` };
-  }, [dist]);
+  const hint = useMemo(() => serveHintText(pointsPerMatch), [pointsPerMatch]);
 
   function setTeamField(idx: number, field: "name" | "player1" | "player2", value: string) {
     setTeamInputs((prev) => prev.map((t, i) => i === idx ? { ...t, [field]: value } : t));
@@ -82,7 +86,7 @@ export default function TeamAmericanoPage() {
       .filter((t) => t.player1 && t.player2);
     if (validTeams.length < minTeams) { setError(`Enter at least ${minTeams} teams (both player names required) for ${courts} court${courts > 1 ? "s" : ""}.`); return; }
     const teams: TeamPair[] = validTeams.map((t) => ({ id: makeId(), name: t.name || `${t.player1} & ${t.player2}`, player1: t.player1, player2: t.player2 }));
-    const next: TeamSession = { code: makeCode(), createdAtISO: new Date().toISOString(), courts, teams, currentRound: 1, rounds: [buildRound(teams, courts, 1)], pointsPerMatch, servesPerRotation };
+    const next: TeamSession = { code: makeCode(), createdAtISO: new Date().toISOString(), courts, teams, currentRound: 1, rounds: [buildRound(teams, courts, 1)], pointsPerMatch };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     setSession(next);
     router.push("/americano/team/session");
@@ -107,6 +111,11 @@ export default function TeamAmericanoPage() {
     stepper: { display: "flex", alignItems: "center", gap: 14 },
     stepBtn: { width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, fontSize: 20, fontWeight: 1000, cursor: "pointer" },
     stepVal: { fontSize: 22, fontWeight: 1100, minWidth: 36, textAlign: "center" as const },
+    serveCard: { borderRadius: 14, padding: "12px 14px", marginTop: 4 },
+    serveCardEven: { background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)" },
+    serveCardOdd: { background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)" },
+    serveCardText: { fontSize: 13, fontWeight: 900, color: WHITE },
+    serveCardSub: { fontSize: 12, opacity: 0.6, marginTop: 4, color: WARM_WHITE },
     teamCard: { borderRadius: 14, padding: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 8 },
     input: { width: "100%", background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 10, padding: "10px 12px", fontSize: 14, outline: "none", fontWeight: 900, boxSizing: "border-box" as const },
     inputSmall: { width: "100%", background: "rgba(255,255,255,0.05)", color: WHITE, border: "1px solid rgba(255,255,255,0.10)", borderRadius: 10, padding: "9px 12px", fontSize: 13, outline: "none", fontWeight: 900, boxSizing: "border-box" as const },
@@ -116,8 +125,6 @@ export default function TeamAmericanoPage() {
     activeSessionCode: { fontSize: 22, fontWeight: 1000, color: ORANGE, letterSpacing: 2 },
     activeSessionMeta: { fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 },
     error: { marginTop: 12, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
-    hintEven: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
-    hintOdd: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
   };
 
   if (!loaded) return <div style={styles.page}><div style={styles.card}><div style={{ opacity: 0.7, fontWeight: 900 }}>Loading…</div></div></div>;
@@ -144,7 +151,6 @@ export default function TeamAmericanoPage() {
           </>
         ) : (
           <>
-            {/* Courts + Points */}
             <div style={styles.sectionLabel}>Match settings</div>
             <div style={styles.settingsGrid}>
               <div style={styles.settingBox}>
@@ -168,19 +174,14 @@ export default function TeamAmericanoPage() {
 
             <div style={styles.divider} />
 
-            {/* Serves per rotation */}
-            <div style={styles.sectionLabel}>Serves before rotation</div>
-            <div style={styles.row}>
-              {[2, 4].map((n) => (
-                <div key={n} style={serveChipStyle(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>{n} pts per serve</div>
-              ))}
+            <div style={styles.sectionLabel}>Serve rotation</div>
+            <div style={{ ...styles.serveCard, ...(hint.even ? styles.serveCardEven : styles.serveCardOdd) }}>
+              <div style={styles.serveCardText}>{hint.text}</div>
+              <div style={styles.serveCardSub}>Serve order: P1(A) → P1(B) → P2(A) → P2(B)</div>
             </div>
-            <div style={serveHint.even ? styles.hintEven : styles.hintOdd}>{serveHint.text}</div>
-            <div style={styles.small}>Serve order per match: P1(A) → P1(B) → P2(A) → P2(B), cycling every {servesPerRotation} pts.</div>
 
             <div style={styles.divider} />
 
-            {/* Teams */}
             <div style={styles.sectionLabel}>Teams — enter at least {minTeams}</div>
             <div style={styles.teamsGrid}>
               {teamInputs.map((t, i) => (
