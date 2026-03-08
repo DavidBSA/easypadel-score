@@ -252,7 +252,7 @@ export default function AmericanoPage() {
             <div style={styles.sectionLabel}>Serves before rotation</div>
             <div style={styles.row}>
               {[2, 4].map((n) => (
-                <div key={n} style={(styles.serveChip as (a: boolean) => React.CSSProperties)(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>
+                  <div key={n} style={serveChipStyle(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>
                   {n} points per serve
                 </div>
               ))}
