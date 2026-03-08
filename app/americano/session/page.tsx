@@ -30,7 +30,7 @@ type AmericanoSession = {
 
 type Score = CourtMatch["score"];
 type MatchSnapshot = { setsA: number; setsB: number; gamesA: number; gamesB: number; pointsA?: number; pointsB?: number; firstServeTeam?: Team; isComplete: boolean };
-type LeaderRow = { playerId: string; name: string; played: number; pointsFor: number; pointsAgainst: number; diff: number };
+type LeaderRow = { playerId: string; name: string; played: number; wins: number; draws: number; losses: number; pointsFor: number; pointsAgainst: number; diff: number };
 
 function safeParseJSON<T>(v: string | null, fb: T): T { try { if (!v) return fb; return JSON.parse(v) as T; } catch { return fb; } }
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
@@ -211,12 +211,15 @@ export default function AmericanoSessionPage() {
   const leaderboard = useMemo((): LeaderRow[] => {
     if (!session) return [];
     const base = new Map<string, LeaderRow>();
-    for (const p of session.players) base.set(p.id, { playerId: p.id, name: p.name, played: 0, pointsFor: 0, pointsAgainst: 0, diff: 0 });
+    for (const p of session.players) base.set(p.id, { playerId: p.id, name: p.name, played: 0, wins: 0, draws: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, diff: 0 });
     for (const r of session.rounds) for (const m of r.matches) {
       if (!m.score.isComplete) continue;
-      const aPts = typeof m.score.pointsA === "number" ? m.score.pointsA : 0; const bPts = typeof m.score.pointsB === "number" ? m.score.pointsB : 0;
-      for (const pid of m.teamA) { const row = base.get(pid); if (row) { row.played++; row.pointsFor += aPts; row.pointsAgainst += bPts; } }
-      for (const pid of m.teamB) { const row = base.get(pid); if (row) { row.played++; row.pointsFor += bPts; row.pointsAgainst += aPts; } }
+      const aPts = typeof m.score.pointsA === "number" ? m.score.pointsA : 0;
+      const bPts = typeof m.score.pointsB === "number" ? m.score.pointsB : 0;
+      const aResult = aPts > bPts ? "win" : aPts === bPts ? "draw" : "loss";
+      const bResult = bPts > aPts ? "win" : aPts === bPts ? "draw" : "loss";
+      for (const pid of m.teamA) { const row = base.get(pid); if (row) { row.played++; row.pointsFor += aPts; row.pointsAgainst += bPts; if (aResult === "win") row.wins++; else if (aResult === "draw") row.draws++; else row.losses++; } }
+      for (const pid of m.teamB) { const row = base.get(pid); if (row) { row.played++; row.pointsFor += bPts; row.pointsAgainst += aPts; if (bResult === "win") row.wins++; else if (bResult === "draw") row.draws++; else row.losses++; } }
     }
     return Array.from(base.values()).map((r) => ({ ...r, diff: r.pointsFor - r.pointsAgainst })).sort((x, y) => y.diff !== x.diff ? y.diff - x.diff : y.pointsFor !== x.pointsFor ? y.pointsFor - x.pointsFor : x.name.localeCompare(y.name));
   }, [session]);
@@ -224,7 +227,7 @@ export default function AmericanoSessionPage() {
   const completedMatchCount = useMemo(() => session?.rounds.flatMap((r) => r.matches).filter((m) => m.score.isComplete).length ?? 0, [session]);
   const totalMatchCount = useMemo(() => session?.rounds.reduce((acc, r) => acc + r.matches.length, 0) ?? 0, [session]);
 
-  const lbRowStyle = (isTop3: boolean): React.CSSProperties => ({ borderRadius: 14, padding: 12, background: isTop3 ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)", border: isTop3 ? "1px solid rgba(255,107,0,0.35)" : "1px solid rgba(255,255,255,0.08)", display: "grid", gridTemplateColumns: "44px 1fr 80px 110px 80px", gap: 10, alignItems: "center" });
+  const lbRowStyle = (isTop3: boolean): React.CSSProperties => ({ borderRadius: 14, padding: 12, background: isTop3 ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)", border: isTop3 ? "1px solid rgba(255,107,0,0.35)" : "1px solid rgba(255,255,255,0.08)", display: "grid", gridTemplateColumns: "36px 1fr 90px 100px 64px", gap: 8, alignItems: "center" });
 
   const styles: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
@@ -269,7 +272,7 @@ export default function AmericanoSessionPage() {
     lbHeaderRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 10, flexWrap: "wrap" as const },
     lbTitle: { fontWeight: 1000, fontSize: 15, color: ORANGE },
     lbMeta: { fontSize: 12, opacity: 0.6, fontWeight: 850 },
-    lbHead: { display: "grid", gridTemplateColumns: "44px 1fr 80px 110px 80px", gap: 10, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 12px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
+    lbHead: { display: "grid", gridTemplateColumns: "36px 1fr 90px 100px 64px", gap: 8, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 12px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
     lbCellRight: { textAlign: "right" as const },
     lbRank: { fontSize: 16, fontWeight: 1100, color: WHITE, textAlign: "center" as const },
     lbName: { fontSize: 15, fontWeight: 1050 },
@@ -400,13 +403,14 @@ export default function AmericanoSessionPage() {
 
         <div style={styles.leaderboardWrap}>
           <div style={styles.lbHeaderRow}><div style={styles.lbTitle}>Leaderboard</div><div style={styles.lbMeta}>{completedMatchCount} of {totalMatchCount} matches completed</div></div>
-          <div style={styles.lbHead}><div style={{ textAlign: "center" as const }}>Rank</div><div>Player</div><div style={styles.lbCellRight}>Played</div><div style={styles.lbCellRight}>Points</div><div style={styles.lbCellRight}>Diff</div></div>
+          <div style={styles.lbHead}><div style={{ textAlign: "center" as const }}>#</div><div>Player</div><div style={styles.lbCellRight}>W / D / L</div><div style={styles.lbCellRight}>Points</div><div style={styles.lbCellRight}>Diff</div></div>
           <div style={{ display: "grid", gap: 8 }}>
             {leaderboard.map((r, idx) => (
               <div key={r.playerId} style={lbRowStyle(idx < 3)}>
                 <div style={styles.lbRank}>{idx + 1}</div><div style={styles.lbName}>{r.name}</div>
-                <div style={styles.lbNum}>{r.played}</div><div style={styles.lbNum}>{r.pointsFor} – {r.pointsAgainst}</div>
-                <div style={styles.lbNum}>{r.diff > 0 ? `+${r.diff}` : r.diff}</div>
+                <div style={styles.lbNum}><span style={{ color: "#4ade80" }}>{r.wins}</span><span style={{ opacity: 0.4 }}> / </span><span style={{ opacity: 0.7 }}>{r.draws}</span><span style={{ opacity: 0.4 }}> / </span><span style={{ color: "#f87171" }}>{r.losses}</span></div>
+                <div style={styles.lbNum}>{r.pointsFor} – {r.pointsAgainst}</div>
+                <div style={{ ...styles.lbNum, color: r.diff > 0 ? "#4ade80" : r.diff < 0 ? "#f87171" : WHITE }}>{r.diff > 0 ? `+${r.diff}` : r.diff}</div>
               </div>
             ))}
           </div>
