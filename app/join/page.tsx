@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import React, { useState } from "react";
+import React, { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const BLACK = "#000000";
@@ -9,7 +9,7 @@ const WHITE = "#FFFFFF";
 const ORANGE = "#FF6B00";
 const WARM_WHITE = "#F5F5F5";
 
-export default function JoinPage() {
+function JoinForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [code, setCode] = useState(searchParams?.get("code")?.toUpperCase() ?? "");
@@ -28,32 +28,21 @@ export default function JoinPage() {
     setLoading(true); setError(""); setIsFull(false);
     try {
       const body: Record<string, string> = {};
-      if (isOrg) {
-        body.organiserPin = pin.trim();
-      } else {
-        body.playerName = playerName.trim();
-      }
+      if (isOrg) { body.organiserPin = pin.trim(); } else { body.playerName = playerName.trim(); }
       const r = await fetch(`/api/sessions/${c}/devices`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const data = await r.json();
       if (!r.ok) {
-        if (data.error === "SESSION_FULL") { setIsFull(true); }
+        if (data.error === "SESSION_FULL") setIsFull(true);
         setError(data.message ?? data.error ?? "Could not join session.");
-        setLoading(false);
-        return;
+        setLoading(false); return;
       }
       localStorage.setItem(`eps_join_${c}`, JSON.stringify({ deviceId: data.deviceId, isOrganiser: data.isOrganiser }));
-      if (data.playerId) {
-        localStorage.setItem(`eps_player_${c}`, JSON.stringify({ id: data.playerId, name: data.playerName }));
-      }
+      if (data.playerId) localStorage.setItem(`eps_player_${c}`, JSON.stringify({ id: data.playerId, name: data.playerName }));
       router.push(data.isOrganiser ? `/session/${c}/organiser` : `/session/${c}/player`);
-    } catch {
-      setError("Network error — check your connection.");
-      setLoading(false);
-    }
+    } catch { setError("Network error — check your connection."); setLoading(false); }
   }
 
   const trackStyle = (on: boolean): React.CSSProperties => ({
@@ -62,8 +51,7 @@ export default function JoinPage() {
     display: "flex", alignItems: "center", padding: "0 3px", flexShrink: 0,
   });
   const dotStyle = (on: boolean): React.CSSProperties => ({
-    width: 18, height: 18, borderRadius: 9, background: WHITE,
-    marginLeft: on ? "auto" : 0,
+    width: 18, height: 18, borderRadius: 9, background: WHITE, marginLeft: on ? "auto" : 0,
   });
 
   const st: Record<string, React.CSSProperties> = {
@@ -89,63 +77,35 @@ export default function JoinPage() {
         <button style={st.backBtn} onClick={() => router.push("/")}>← Back</button>
         <div style={st.title}>Join Session</div>
         <div style={st.sub}>Enter the code from your organiser.</div>
-
         <div style={st.label}>Session code</div>
-        <input
-          style={st.codeInput}
-          value={code}
-          maxLength={4}
-          placeholder="XXXX"
-          autoFocus
+        <input style={st.codeInput} value={code} maxLength={4} placeholder="XXXX" autoFocus
           onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-          onKeyDown={(e) => { if (e.key === "Enter") join(); }}
-        />
-
+          onKeyDown={(e) => { if (e.key === "Enter") join(); }} />
         {!isOrg && (
           <>
             <div style={st.divider} />
             <div style={st.label}>Your name</div>
-            <input
-              style={st.nameInput}
-              value={playerName}
-              placeholder="e.g. Chris"
-              maxLength={30}
+            <input style={st.nameInput} value={playerName} placeholder="e.g. Chris" maxLength={30}
               onChange={(e) => setPlayerName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") join(); }}
-            />
+              onKeyDown={(e) => { if (e.key === "Enter") join(); }} />
           </>
         )}
-
         <div style={st.divider} />
-
         <div style={st.toggle} onClick={() => setIsOrg((v) => !v)}>
           <div style={trackStyle(isOrg)}><div style={dotStyle(isOrg)} /></div>
           <div style={st.toggleLabel}>I am the organiser</div>
         </div>
-
         {isOrg && (
           <div style={{ marginTop: 16 }}>
             <div style={st.label}>Organiser PIN</div>
-            <input
-              style={st.pinInput}
-              value={pin}
-              placeholder="••••"
-              type="password"
-              maxLength={8}
+            <input style={st.pinInput} value={pin} placeholder="••••" type="password" maxLength={8}
               onChange={(e) => setPin(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") join(); }}
-            />
+              onKeyDown={(e) => { if (e.key === "Enter") join(); }} />
           </div>
         )}
-
-        <button
-          style={{ ...st.primaryBtn, opacity: loading ? 0.5 : 1 }}
-          onClick={join}
-          disabled={loading}
-        >
+        <button style={{ ...st.primaryBtn, opacity: loading ? 0.5 : 1 }} onClick={join} disabled={loading}>
           {loading ? "Joining…" : "Join Session"}
         </button>
-
         {error && (
           <div style={{ ...st.errorBox, background: isFull ? "rgba(255,180,0,0.10)" : "rgba(255,64,64,0.10)", border: `1px solid ${isFull ? "rgba(255,180,0,0.40)" : "rgba(255,64,64,0.30)"}` }}>
             {isFull && <div style={{ fontSize: 18, marginBottom: 4 }}>🏟️</div>}
@@ -154,5 +114,13 @@ export default function JoinPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function JoinPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "#000000" }} />}>
+      <JoinForm />
+    </Suspense>
   );
 }
