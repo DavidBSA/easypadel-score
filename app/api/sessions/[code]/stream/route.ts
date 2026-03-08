@@ -3,15 +3,15 @@ import { prisma } from "../../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-// Poll interval in ms — low enough to feel live, high enough to not hammer DB
 const POLL_INTERVAL = 2000;
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   const session = await prisma.session.findUnique({
-    where: { code: params.code.toUpperCase() },
+    where: { code: code.toUpperCase() },
   });
 
   if (!session) {
@@ -27,7 +27,6 @@ export async function GET(
       let lastUpdatedAt = new Date(0);
       let active = true;
 
-      // Send initial state immediately
       async function sendState() {
         try {
           const data = await prisma.session.findUnique({
@@ -43,7 +42,6 @@ export async function GET(
 
           if (!data) return;
 
-          // Only send if something changed
           if (data.updatedAt <= lastUpdatedAt) return;
           lastUpdatedAt = data.updatedAt;
 
@@ -57,13 +55,11 @@ export async function GET(
 
       await sendState();
 
-      // Poll for changes
       const interval = setInterval(async () => {
         if (!active) { clearInterval(interval); return; }
         await sendState();
       }, POLL_INTERVAL);
 
-      // Clean up on disconnect
       req.signal.addEventListener("abort", () => {
         active = false;
         clearInterval(interval);

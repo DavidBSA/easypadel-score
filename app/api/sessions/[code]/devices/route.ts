@@ -3,11 +3,12 @@ import { prisma } from "../../../../../lib/prisma";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
   try {
+    const { code } = await params;
     const session = await prisma.session.findUnique({
-      where: { code: params.code.toUpperCase() },
+      where: { code: code.toUpperCase() },
     });
 
     if (!session) {

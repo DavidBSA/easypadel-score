@@ -3,9 +3,10 @@ import { prisma } from "../../../../../lib/prisma";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await req.json();
     const { deviceId, pointsA, pointsB, isOrganiserOverride } = body;
 
@@ -17,7 +18,7 @@ export async function POST(
     }
 
     const match = await prisma.match.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: { scoreSubmissions: true },
     });
 
@@ -25,7 +26,6 @@ export async function POST(
       return NextResponse.json({ error: "Match not found" }, { status: 404 });
     }
 
-    // Organiser override — force confirm regardless
     if (isOrganiserOverride) {
       const device = await prisma.device.findUnique({
         where: { id: deviceId },
@@ -38,7 +38,7 @@ export async function POST(
       }
 
       const updated = await prisma.match.update({
-        where: { id: params.id },
+        where: { id },
         data: {
           pointsA,
           pointsB,
@@ -50,34 +50,30 @@ export async function POST(
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
-    // Normal submission — upsert this device's score
     await prisma.scoreSubmission.upsert({
-      where: { matchId_deviceId: { matchId: params.id, deviceId } },
-      create: { matchId: params.id, deviceId, pointsA, pointsB },
+      where: { matchId_deviceId: { matchId: id, deviceId } },
+      create: { matchId: id, deviceId, pointsA, pointsB },
       update: { pointsA, pointsB, submittedAt: new Date() },
     });
 
-    // Reload all submissions
     const submissions = await prisma.scoreSubmission.findMany({
-      where: { matchId: params.id },
+      where: { matchId: id },
     });
 
-    // Only one submission so far — mark as pending confirmation
     if (submissions.length < 2) {
       const updated = await prisma.match.update({
-        where: { id: params.id },
+        where: { id },
         data: { pointsA, pointsB, scoreStatus: "PENDING" },
       });
       return NextResponse.json({ match: updated, result: "PENDING" });
     }
 
-    // Two submissions — check if they agree
     const [s1, s2] = submissions;
     const agree = s1.pointsA === s2.pointsA && s1.pointsB === s2.pointsB;
 
     if (agree) {
       const updated = await prisma.match.update({
-        where: { id: params.id },
+        where: { id },
         data: {
           pointsA: s1.pointsA,
           pointsB: s1.pointsB,
@@ -88,14 +84,9 @@ export async function POST(
       });
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     } else {
-      // Conflict — flag for organiser
       const updated = await prisma.match.update({
-        where: { id: params.id },
-        data: {
-          scoreStatus: "CONFLICT",
-          // Store both submissions in a way organiser can see
-          // pointsA/B remain null until resolved
-        },
+        where: { id },
+        data: { scoreStatus: "CONFLICT" },
       });
       return NextResponse.json({
         match: updated,

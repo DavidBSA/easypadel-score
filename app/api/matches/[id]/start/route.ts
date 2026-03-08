@@ -3,9 +3,10 @@ import { prisma } from "../../../../../lib/prisma";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await req.json();
     const { courtNumber, deviceId } = body;
 
@@ -16,7 +17,6 @@ export async function PATCH(
       );
     }
 
-    // Verify device is organiser
     const device = await prisma.device.findUnique({ where: { id: deviceId } });
     if (!device?.isOrganiser) {
       return NextResponse.json(
@@ -25,7 +25,7 @@ export async function PATCH(
       );
     }
 
-    const match = await prisma.match.findUnique({ where: { id: params.id } });
+    const match = await prisma.match.findUnique({ where: { id } });
     if (!match) {
       return NextResponse.json({ error: "Match not found" }, { status: 404 });
     }
@@ -37,7 +37,7 @@ export async function PATCH(
     }
 
     const updated = await prisma.match.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         status: "IN_PROGRESS",
         courtNumber,
