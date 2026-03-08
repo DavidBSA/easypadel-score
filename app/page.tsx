@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
@@ -23,16 +23,8 @@ function safeParseJSON<T>(value: string | null, fallback: T): T {
   }
 }
 
-function normalizeCode(v: string) {
-  return v.trim().toUpperCase().replace(/\s+/g, "");
-}
-
 export default function HomePage() {
   const router = useRouter();
-
-  const [joinOpen, setJoinOpen] = useState(false);
-  const [code, setCode] = useState("");
-  const [error, setError] = useState("");
   const [hasLocalSession, setHasLocalSession] = useState(false);
 
   useEffect(() => {
@@ -42,20 +34,6 @@ export default function HomePage() {
     );
     setHasLocalSession(Boolean(s?.code));
   }, []);
-
-  const cleanCode = useMemo(() => normalizeCode(code), [code]);
-
-  function joinSession() {
-    setError("");
-    const local = safeParseJSON<AmericanoSession | null>(
-      localStorage.getItem(STORAGE_SESSION_KEY),
-      null
-    );
-    if (!cleanCode) { setError("Enter a session code."); return; }
-    if (!local?.code) { setError("No session found on this device. Create one first."); return; }
-    if (normalizeCode(local.code) !== cleanCode) { setError("This device does not have that session."); return; }
-    router.push("/americano/session");
-  }
 
   const styles: Record<string, React.CSSProperties> = {
     page: {
@@ -145,64 +123,13 @@ export default function HomePage() {
       color: ORANGE,
       verticalAlign: "middle",
     },
-    joinCard: {
-      borderRadius: 18,
-      padding: 14,
-      background: NAVY,
-      border: "1px solid rgba(255,255,255,0.10)",
-      display: "grid",
-      gap: 10,
-      textAlign: "left",
-    },
-    joinTitle: { fontWeight: 1000, fontSize: 14, color: WHITE },
-    row: { display: "grid", gridTemplateColumns: "1fr 100px", gap: 10 },
-    input: {
-      width: "100%",
-      background: "rgba(255,255,255,0.07)",
-      color: WHITE,
-      border: "1px solid rgba(255,255,255,0.16)",
-      borderRadius: 14,
-      padding: "14px 12px",
-      fontSize: 18,
-      outline: "none",
-      fontWeight: 1000,
-      letterSpacing: 4,
-      textTransform: "uppercase",
-    },
-    joinBtn: {
-      borderRadius: 14,
-      padding: "14px 12px",
-      fontSize: 16,
-      fontWeight: 1000,
-      cursor: "pointer",
-      border: "none",
-      background: ORANGE,
-      color: WHITE,
-      width: "100%",
-    },
-    hint: {
-      fontSize: 12,
-      color: WARM_WHITE,
-      opacity: 0.6,
-      fontWeight: 800,
-      lineHeight: 1.4,
-    },
-    error: {
-      borderRadius: 12,
-      padding: 10,
-      background: "rgba(255,64,64,0.12)",
-      border: "1px solid rgba(255,64,64,0.30)",
-      fontWeight: 900,
-      fontSize: 12,
-      color: WHITE,
-    },
     sectionLabel: {
       fontSize: 11,
       fontWeight: 1000,
       letterSpacing: 1.5,
       opacity: 0.4,
-      textTransform: "uppercase",
-      textAlign: "left",
+      textTransform: "uppercase" as const,
+      textAlign: "left" as const,
       paddingLeft: 4,
       marginBottom: -4,
     },
@@ -232,13 +159,13 @@ export default function HomePage() {
 
         <div style={styles.divider} />
 
-        {/* Primary action */}
+        {/* Single match */}
         <div style={styles.sectionLabel}>Single match</div>
         <button style={styles.btnPrimary} onClick={() => router.push("/match/setup")}>
           Start Match
         </button>
 
-        {/* Americano actions */}
+        {/* Americano */}
         <div style={styles.sectionLabel}>Americano tournament</div>
         <button style={styles.btnSecondary} onClick={() => router.push("/americano")}>
           Mixed Americano
@@ -249,38 +176,20 @@ export default function HomePage() {
 
         <div style={styles.divider} />
 
-        {/* Join */}
+        {/* Multi-device session */}
+        <div style={styles.sectionLabel}>Multi-device session</div>
+        <button style={styles.btnPrimary} onClick={() => router.push("/session/new")}>
+          Create Session
+        </button>
         <button
           style={styles.btnGhost}
-          onClick={() => { setError(""); setJoinOpen((v) => !v); }}
+          onClick={() => router.push("/join")}
         >
-          Join Americano Session
+          Join Session
           {hasLocalSession && (
             <span style={styles.badge}>Session on device</span>
           )}
         </button>
-
-        {joinOpen && (
-          <div style={styles.joinCard}>
-            <div style={styles.joinTitle}>Enter session code</div>
-            <div style={styles.row}>
-              <input
-                style={styles.input}
-                value={code}
-                placeholder="ABCD"
-                onChange={(e) => setCode(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") joinSession(); }}
-              />
-              <button style={styles.joinBtn} onClick={joinSession}>
-                Join
-              </button>
-            </div>
-            <div style={styles.hint}>
-              Currently checks for a matching session on this device. Multi-device joining coming in Phase 2.
-            </div>
-            {error && <div style={styles.error}>{error}</div>}
-          </div>
-        )}
 
       </div>
     </div>
