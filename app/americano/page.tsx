@@ -87,7 +87,17 @@ function buildRound(players: SessionPlayer[], courts: number, roundNumber: numbe
   }
   return { roundNumber, matches };
 }
-
+const serveChipStyle = (active: boolean): React.CSSProperties => ({
+  borderRadius: 12,
+  padding: "10px 18px",
+  fontSize: 14,
+  fontWeight: 1000,
+  cursor: "pointer",
+  border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
+  background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
+  color: active ? WHITE : WARM_WHITE,
+  whiteSpace: "nowrap" as const,
+});
 const playerChipStyle = (active: boolean): React.CSSProperties => ({
   borderRadius: 14,
   padding: 12,
