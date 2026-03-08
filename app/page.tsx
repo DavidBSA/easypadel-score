@@ -4,15 +4,15 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
-const NAVY = "#0F1E2E";
+const BLACK = "#000000";
+const NAVY = "#0D1B2A";
 const WHITE = "#FFFFFF";
-const TEAL = "#00A8A8";
+const ORANGE = "#FF6B00";
+const WARM_WHITE = "#F5F5F5";
 
 const STORAGE_SESSION_KEY = "eps_session_active";
 
-type AmericanoSession = {
-  code: string;
-};
+type AmericanoSession = { code: string };
 
 function safeParseJSON<T>(value: string | null, fallback: T): T {
   try {
@@ -36,200 +36,252 @@ export default function HomePage() {
   const [hasLocalSession, setHasLocalSession] = useState(false);
 
   useEffect(() => {
-    const s = safeParseJSON<AmericanoSession | null>(localStorage.getItem(STORAGE_SESSION_KEY), null);
+    const s = safeParseJSON<AmericanoSession | null>(
+      localStorage.getItem(STORAGE_SESSION_KEY),
+      null
+    );
     setHasLocalSession(Boolean(s?.code));
   }, []);
 
   const cleanCode = useMemo(() => normalizeCode(code), [code]);
 
-  function startMatch() {
-    router.push("/match/setup");
-  }
-
-  function startAmericano() {
-    router.push("/americano");
-  }
-
-  function toggleJoin() {
-    setError("");
-    setJoinOpen((v) => !v);
-  }
-
   function joinSession() {
     setError("");
-
-    // For now we are still single device source of truth
-    // So join is a friendly gateway that routes to the local session if present.
-    const local = safeParseJSON<AmericanoSession | null>(localStorage.getItem(STORAGE_SESSION_KEY), null);
-
-    if (!cleanCode) {
-      setError("Enter a session code.");
-      return;
-    }
-
-    if (!local?.code) {
-      setError("No session found on this device. Create one first.");
-      return;
-    }
-
-    if (normalizeCode(local.code) !== cleanCode) {
-      setError("This device does not have that session yet.");
-      return;
-    }
-
+    const local = safeParseJSON<AmericanoSession | null>(
+      localStorage.getItem(STORAGE_SESSION_KEY),
+      null
+    );
+    if (!cleanCode) { setError("Enter a session code."); return; }
+    if (!local?.code) { setError("No session found on this device. Create one first."); return; }
+    if (normalizeCode(local.code) !== cleanCode) { setError("This device does not have that session."); return; }
     router.push("/americano/session");
   }
 
   const styles: Record<string, React.CSSProperties> = {
     page: {
       minHeight: "100vh",
-      background: NAVY,
+      background: BLACK,
       color: WHITE,
       display: "flex",
       justifyContent: "center",
       alignItems: "center",
-      padding: 20,
+      padding: 24,
     },
     card: {
       width: "100%",
-      maxWidth: 420,
+      maxWidth: 400,
       display: "grid",
-      gap: 14,
+      gap: 12,
       textAlign: "center",
     },
-    logoWrap: { display: "flex", justifyContent: "center", marginBottom: 4 },
-    title: { fontSize: 28, fontWeight: 950, letterSpacing: 0.4 },
-    subtitle: { fontSize: 13, opacity: 0.75, marginTop: -8, fontWeight: 800 },
-    btn: {
+    logoWrap: {
+      display: "flex",
+      justifyContent: "center",
+      marginBottom: 8,
+    },
+    appName: {
+      fontSize: 26,
+      fontWeight: 1000,
+      letterSpacing: 0.6,
+      color: WHITE,
+    },
+    subtitle: {
+      fontSize: 13,
+      color: WARM_WHITE,
+      opacity: 0.65,
+      marginTop: -6,
+      fontWeight: 800,
+      letterSpacing: 0.3,
+    },
+    divider: {
+      height: 1,
+      background: "rgba(255,255,255,0.08)",
+      margin: "4px 0",
+    },
+    btnPrimary: {
       borderRadius: 18,
-      padding: "18px 16px",
+      padding: "20px 16px",
       fontSize: 18,
       fontWeight: 1000,
       cursor: "pointer",
       border: "none",
-      background: TEAL,
-      color: NAVY,
+      background: ORANGE,
+      color: WHITE,
       width: "100%",
+      letterSpacing: 0.3,
     },
     btnSecondary: {
       borderRadius: 18,
-      padding: "18px 16px",
+      padding: "20px 16px",
       fontSize: 18,
       fontWeight: 1000,
       cursor: "pointer",
-      border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(255,255,255,0.08)",
+      border: `1px solid rgba(255,107,0,0.35)`,
+      background: "rgba(255,107,0,0.10)",
       color: WHITE,
       width: "100%",
+      letterSpacing: 0.3,
     },
-    joinCard: {
-      marginTop: 6,
+    btnGhost: {
       borderRadius: 18,
-      padding: 12,
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      display: "grid",
-      gap: 10,
-      textAlign: "left",
-    },
-    row: { display: "grid", gridTemplateColumns: "1fr 120px", gap: 10 },
-    input: {
-      width: "100%",
-      background: "rgba(255,255,255,0.08)",
-      color: WHITE,
-      border: "1px solid rgba(255,255,255,0.16)",
-      borderRadius: 14,
-      padding: "14px 12px",
+      padding: "18px 16px",
       fontSize: 16,
-      outline: "none",
       fontWeight: 950,
-      letterSpacing: 1,
-      textTransform: "uppercase",
-    },
-    smallBtn: {
-      borderRadius: 14,
-      padding: "14px 12px",
-      fontSize: 16,
-      fontWeight: 1000,
       cursor: "pointer",
-      border: "none",
-      background: TEAL,
-      color: NAVY,
+      border: "1px solid rgba(255,255,255,0.14)",
+      background: "rgba(255,255,255,0.05)",
+      color: WARM_WHITE,
       width: "100%",
-    },
-    hint: { fontSize: 12, opacity: 0.8, fontWeight: 800, lineHeight: 1.35 },
-    error: {
-      borderRadius: 14,
-      padding: 10,
-      background: "rgba(255,64,64,0.12)",
-      border: "1px solid rgba(255,64,64,0.30)",
-      fontWeight: 900,
-      fontSize: 12,
     },
     badge: {
       display: "inline-block",
       marginLeft: 8,
       borderRadius: 999,
-      padding: "6px 10px",
+      padding: "5px 10px",
       fontSize: 11,
       fontWeight: 1000,
-      border: "1px solid rgba(0,168,168,0.40)",
-      background: "rgba(0,168,168,0.12)",
-      color: WHITE,
+      border: "1px solid rgba(255,107,0,0.45)",
+      background: "rgba(255,107,0,0.15)",
+      color: ORANGE,
       verticalAlign: "middle",
+    },
+    joinCard: {
+      borderRadius: 18,
+      padding: 14,
+      background: NAVY,
+      border: "1px solid rgba(255,255,255,0.10)",
+      display: "grid",
+      gap: 10,
+      textAlign: "left",
+    },
+    joinTitle: { fontWeight: 1000, fontSize: 14, color: WHITE },
+    row: { display: "grid", gridTemplateColumns: "1fr 100px", gap: 10 },
+    input: {
+      width: "100%",
+      background: "rgba(255,255,255,0.07)",
+      color: WHITE,
+      border: "1px solid rgba(255,255,255,0.16)",
+      borderRadius: 14,
+      padding: "14px 12px",
+      fontSize: 18,
+      outline: "none",
+      fontWeight: 1000,
+      letterSpacing: 4,
+      textTransform: "uppercase",
+    },
+    joinBtn: {
+      borderRadius: 14,
+      padding: "14px 12px",
+      fontSize: 16,
+      fontWeight: 1000,
+      cursor: "pointer",
+      border: "none",
+      background: ORANGE,
+      color: WHITE,
+      width: "100%",
+    },
+    hint: {
+      fontSize: 12,
+      color: WARM_WHITE,
+      opacity: 0.6,
+      fontWeight: 800,
+      lineHeight: 1.4,
+    },
+    error: {
+      borderRadius: 12,
+      padding: 10,
+      background: "rgba(255,64,64,0.12)",
+      border: "1px solid rgba(255,64,64,0.30)",
+      fontWeight: 900,
+      fontSize: 12,
+      color: WHITE,
+    },
+    sectionLabel: {
+      fontSize: 11,
+      fontWeight: 1000,
+      letterSpacing: 1.5,
+      opacity: 0.4,
+      textTransform: "uppercase",
+      textAlign: "left",
+      paddingLeft: 4,
+      marginBottom: -4,
     },
   };
 
   return (
     <div style={styles.page}>
       <div style={styles.card}>
+
+        {/* Logo */}
         <div style={styles.logoWrap}>
-          <Image src="/logo.png" alt="EasyPadelScore" width={110} height={110} priority />
+          <Image
+            src="/eps-logo.png"
+            alt="EasyPadelScore"
+            width={120}
+            height={70}
+            priority
+            style={{ objectFit: "contain" }}
+          />
         </div>
 
+        {/* Title */}
         <div>
-          <div style={styles.title}>EasyPadelScore</div>
+          <div style={styles.appName}>EasyPadelScore</div>
           <div style={styles.subtitle}>Fast scoring for casual padel</div>
         </div>
 
-        <button style={styles.btn} onClick={startMatch}>
+        <div style={styles.divider} />
+
+        {/* Primary action */}
+        <div style={styles.sectionLabel}>Single match</div>
+        <button style={styles.btnPrimary} onClick={() => router.push("/match/setup")}>
           Start Match
         </button>
 
-        <button style={styles.btnSecondary} onClick={startAmericano}>
-          Start Americano
+        {/* Americano actions */}
+        <div style={styles.sectionLabel}>Americano tournament</div>
+        <button style={styles.btnSecondary} onClick={() => router.push("/americano")}>
+          Mixed Americano
+        </button>
+        <button style={styles.btnSecondary} onClick={() => router.push("/americano/team")}>
+          Team Americano
         </button>
 
-        <button style={styles.btnSecondary} onClick={toggleJoin}>
+        <div style={styles.divider} />
+
+        {/* Join */}
+        <button
+          style={styles.btnGhost}
+          onClick={() => { setError(""); setJoinOpen((v) => !v); }}
+        >
           Join Americano Session
-          {hasLocalSession ? <span style={styles.badge}>Session on device</span> : null}
+          {hasLocalSession && (
+            <span style={styles.badge}>Session on device</span>
+          )}
         </button>
 
-        {joinOpen ? (
+        {joinOpen && (
           <div style={styles.joinCard}>
-            <div style={{ fontWeight: 1000 }}>Enter session code</div>
+            <div style={styles.joinTitle}>Enter session code</div>
             <div style={styles.row}>
               <input
                 style={styles.input}
                 value={code}
                 placeholder="ABCD"
                 onChange={(e) => setCode(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") joinSession();
-                }}
+                onKeyDown={(e) => { if (e.key === "Enter") joinSession(); }}
               />
-              <button style={styles.smallBtn} onClick={joinSession}>
+              <button style={styles.joinBtn} onClick={joinSession}>
                 Join
               </button>
             </div>
-
             <div style={styles.hint}>
-              Offline for now, this checks for a matching session saved on this device. Multi device joining comes later.
+              Currently checks for a matching session on this device. Multi-device joining coming in Phase 2.
             </div>
-
-            {error ? <div style={styles.error}>{error}</div> : null}
+            {error && <div style={styles.error}>{error}</div>}
           </div>
-        ) : null}
+        )}
+
       </div>
     </div>
   );
