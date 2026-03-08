@@ -135,6 +135,8 @@ export default function AmericanoSessionPage() {
   const [session, setSession] = useState<AmericanoSession | null>(null);
   const [showServeHelper, setShowServeHelper] = useState(true);
   const [historyByKey, setHistoryByKey] = useState<Record<string, MatchSnapshot[]>>({});
+  const [editingScore, setEditingScore] = useState<{ rn: number; cn: number; team: Team } | null>(null);
+  const [editDraft, setEditDraft] = useState("");
 
   useEffect(() => {
     const s = safeParseJSON<AmericanoSession | null>(localStorage.getItem(STORAGE_SESSION_KEY), null);
@@ -205,6 +207,27 @@ export default function AmericanoSessionPage() {
     persist({ ...session, rounds: session.rounds.map((r) => r.roundNumber !== currentRound.roundNumber ? r : { ...r, matches: r.matches.map((m) => ({ ...m, score: { ...m.score, firstServeTeam: (Math.random() < 0.5 ? "A" : "B") as Team } })) }) });
   }
   function setPointsPerMatch(n: number) { if (!session) return; persist({ ...session, pointsPerMatch: clamp(Math.round(n), 8, 99) }); }
+  function startEditScore(rn: number, cn: number, team: Team, current: number) {
+    if (!session) return;
+    const round = session.rounds.find((r) => r.roundNumber === rn);
+    const match = round?.matches.find((m) => m.courtNumber === cn);
+    if (match?.score.isComplete) return;
+    setEditingScore({ rn, cn, team }); setEditDraft(String(current));
+  }
+  function commitEditScore() {
+    if (!editingScore || !session) return;
+    const { rn, cn, team } = editingScore;
+    const val = parseInt(editDraft, 10);
+    if (!isNaN(val) && val >= 0) {
+      updateMatchScore(rn, cn, (s) => {
+        const cur = { pA: typeof s.pointsA === "number" ? s.pointsA : 0, pB: typeof s.pointsB === "number" ? s.pointsB : 0 };
+        const nA = team === "A" ? clamp(val, 0, pointsPerMatch) : cur.pA;
+        const nB = team === "B" ? clamp(val, 0, pointsPerMatch) : cur.pB;
+        return { ...s, pointsA: nA, pointsB: nB, isComplete: nA + nB >= pointsPerMatch };
+      });
+    }
+    setEditingScore(null); setEditDraft("");
+  }
   function goNextRound() { if (!session || !allMatchesComplete) return; if (isLastRound) persist(buildNextRound(session)); else persist({ ...session, currentRound: roundNumbers[currentRoundIndex + 1] }); }
   function goPrevRound() { if (!session || currentRoundIndex <= 0) return; persist({ ...session, currentRound: roundNumbers[currentRoundIndex - 1] }); }
 
@@ -259,7 +282,8 @@ export default function AmericanoSessionPage() {
     pointsRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
     pointsBox: { borderRadius: 16, padding: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 8 },
     boxTitle: { fontWeight: 1000, fontSize: 13, opacity: 0.85 },
-    bigNums: { fontSize: 36, fontWeight: 1150, letterSpacing: 0.4, lineHeight: 1.05, color: WHITE },
+    bigNums: { fontSize: 36, fontWeight: 1150, letterSpacing: 0.4, lineHeight: 1.05, color: WHITE, cursor: "pointer", userSelect: "none" as const },
+    bigNumsInput: { fontSize: 36, fontWeight: 1150, width: "100%", background: "rgba(255,107,0,0.12)", color: WHITE, border: "1px solid rgba(255,107,0,0.55)", borderRadius: 10, padding: "2px 8px", outline: "none", boxSizing: "border-box" as const },
     controlsRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
     ctrlBtnPrimary: { borderRadius: 14, padding: "14px 10px", fontSize: 16, fontWeight: 1100, cursor: "pointer", border: "none", background: ORANGE, color: WHITE },
     ctrlBtn: { borderRadius: 14, padding: "14px 10px", fontSize: 16, fontWeight: 1100, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE },
@@ -362,7 +386,15 @@ export default function AmericanoSessionPage() {
                   <div style={styles.pointsRow}>
                     <div style={styles.pointsBox}>
                       <div style={styles.boxTitle}>Team A</div>
-                      <div style={styles.bigNums}>{pA}</div>
+                      {editingScore?.rn === currentRound.roundNumber && editingScore?.cn === m.courtNumber && editingScore?.team === "A" ? (
+                        <input style={styles.bigNumsInput} type="number" inputMode="numeric" value={editDraft} autoFocus
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onBlur={commitEditScore}
+                          onKeyDown={(e) => { if (e.key === "Enter") commitEditScore(); if (e.key === "Escape") { setEditingScore(null); setEditDraft(""); } }} />
+                      ) : (
+                        <div style={{ ...styles.bigNums, opacity: m.score.isComplete ? 0.6 : 1 }} onClick={() => startEditScore(currentRound.roundNumber, m.courtNumber, "A", pA)} title="Tap to edit">{pA}</div>
+                      )}
                       <div style={styles.controlsRow}>
                         <button style={{ ...styles.ctrlBtnPrimary, opacity: m.score.isComplete ? 0.4 : 1 }} onClick={() => addPoint(currentRound.roundNumber, m.courtNumber, "A")} disabled={m.score.isComplete}>+1</button>
                         <button style={{ ...styles.ctrlBtn, opacity: m.score.isComplete ? 0.4 : 1 }} onClick={() => removePoint(currentRound.roundNumber, m.courtNumber, "A")} disabled={m.score.isComplete}>−1</button>
@@ -370,7 +402,15 @@ export default function AmericanoSessionPage() {
                     </div>
                     <div style={styles.pointsBox}>
                       <div style={styles.boxTitle}>Team B</div>
-                      <div style={styles.bigNums}>{pB}</div>
+                      {editingScore?.rn === currentRound.roundNumber && editingScore?.cn === m.courtNumber && editingScore?.team === "B" ? (
+                        <input style={styles.bigNumsInput} type="number" inputMode="numeric" value={editDraft} autoFocus
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onBlur={commitEditScore}
+                          onKeyDown={(e) => { if (e.key === "Enter") commitEditScore(); if (e.key === "Escape") { setEditingScore(null); setEditDraft(""); } }} />
+                      ) : (
+                        <div style={{ ...styles.bigNums, opacity: m.score.isComplete ? 0.6 : 1 }} onClick={() => startEditScore(currentRound.roundNumber, m.courtNumber, "B", pB)} title="Tap to edit">{pB}</div>
+                      )}
                       <div style={styles.controlsRow}>
                         <button style={{ ...styles.ctrlBtnPrimary, opacity: m.score.isComplete ? 0.4 : 1 }} onClick={() => addPoint(currentRound.roundNumber, m.courtNumber, "B")} disabled={m.score.isComplete}>+1</button>
                         <button style={{ ...styles.ctrlBtn, opacity: m.score.isComplete ? 0.4 : 1 }} onClick={() => removePoint(currentRound.roundNumber, m.courtNumber, "B")} disabled={m.score.isComplete}>−1</button>
