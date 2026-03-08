@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../lib/prisma";
 import type { Prisma } from "../../../app/generated/prisma";
-import { generateMatchQueue } from "../../../lib/queue";
 
 function makeCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -18,23 +17,15 @@ function makePin(): string {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { format, courts, pointsPerMatch, players } = body;
+    const { format, courts, pointsPerMatch, maxPlayers } = body;
 
-    // Validate
     if (!format || !["MIXED", "TEAM"].includes(format)) {
       return NextResponse.json({ error: "Invalid format" }, { status: 400 });
     }
     if (!courts || courts < 1 || courts > 6) {
       return NextResponse.json({ error: "Invalid courts" }, { status: 400 });
     }
-    if (!players || players.length < courts * (format === "TEAM" ? 2 : 4)) {
-      return NextResponse.json(
-        { error: "Not enough players" },
-        { status: 400 }
-      );
-    }
 
-    // Generate unique code
     let code = makeCode();
     let attempts = 0;
     while (attempts < 10) {
@@ -46,54 +37,17 @@ export async function POST(req: NextRequest) {
 
     const organiserPin = makePin();
 
-    // Create session + players in a transaction
     const session = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const sess = await tx.session.create({
+      return tx.session.create({
         data: {
           code,
           organiserPin,
           format,
           courts,
           pointsPerMatch: pointsPerMatch ?? 21,
+          maxPlayers: maxPlayers ?? null,
         },
       });
-
-      // Create players
-      const createdPlayers = await Promise.all(
-        players.map((p: string | { name: string; partnerName?: string }) =>
-        tx.player.create({
-        data: {
-        sessionId: sess.id,
-        name: typeof p === "string" ? p : p.name,
-        partnerName: typeof p === "string" ? null : (p.partnerName ?? null),
-        },
-        })
-    )
-      );
-
-      // Generate match queue
-      const queueMatches = generateMatchQueue(
-        createdPlayers.map((p) => ({
-          id: p.id,
-          name: p.name,
-          isActive: true,
-        })),
-        courts
-      );
-
-      // Create all matches
-      await tx.match.createMany({
-        data: queueMatches.map((m) => ({
-          sessionId: sess.id,
-          queuePosition: m.queuePosition,
-          teamAPlayer1: m.teamAPlayer1,
-          teamAPlayer2: m.teamAPlayer2,
-          teamBPlayer1: m.teamBPlayer1,
-          teamBPlayer2: m.teamBPlayer2,
-        })),
-      });
-
-      return sess;
     });
 
     return NextResponse.json({
@@ -103,9 +57,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("POST /api/sessions error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

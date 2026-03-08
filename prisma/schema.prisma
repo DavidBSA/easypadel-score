@@ -13,6 +13,7 @@ enum SessionFormat {
 }
 
 enum SessionStatus {
+  LOBBY
   ACTIVE
   COMPLETE
 }
@@ -34,9 +35,10 @@ model Session {
   code           String        @unique
   organiserPin   String
   format         SessionFormat
-  status         SessionStatus @default(ACTIVE)
+  status         SessionStatus @default(LOBBY)
   courts         Int
   pointsPerMatch Int           @default(21)
+  maxPlayers     Int?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -56,6 +58,7 @@ model Player {
   createdAt   DateTime @default(now())
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  device  Device?
 
   @@index([sessionId])
 }
@@ -105,10 +108,12 @@ model Device {
   sessionId   String
   isOrganiser Boolean  @default(false)
   courtNumber Int?
+  playerId    String?  @unique
   lastSeenAt  DateTime @default(now())
   createdAt   DateTime @default(now())
 
   session     Session           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  player      Player?           @relation(fields: [playerId], references: [id])
   submissions ScoreSubmission[]
 
   @@index([sessionId])

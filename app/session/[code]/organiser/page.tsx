@@ -14,9 +14,7 @@ const RED = "#FF4040";
 type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number; submittedAt: string };
 type Match = {
-  id: string;
-  queuePosition: number;
-  courtNumber: number | null;
+  id: string; queuePosition: number; courtNumber: number | null;
   status: "PENDING" | "IN_PROGRESS" | "COMPLETE";
   teamAPlayer1: string; teamAPlayer2: string;
   teamBPlayer1: string; teamBPlayer2: string;
@@ -26,10 +24,12 @@ type Match = {
   startedAt: string | null; completedAt: string | null;
 };
 type Session = {
-  id: string; code: string; format: string; status: string;
-  courts: number; pointsPerMatch: number;
+  id: string; code: string; format: string;
+  status: "LOBBY" | "ACTIVE" | "COMPLETE";
+  courts: number; pointsPerMatch: number; maxPlayers: number | null;
   players: Player[]; matches: Match[];
 };
+type LeaderRow = { playerId: string; name: string; played: number; pointsFor: number; pointsAgainst: number; diff: number };
 
 function pill(label: string, bg: string, border: string): React.ReactNode {
   return (
@@ -52,15 +52,22 @@ export default function OrganiserPage() {
 
   const [session, setSession] = useState<Session | null>(null);
   const [sessionError, setSessionError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [showQR, setShowQR] = useState(false);
 
-  // Conflict resolve: matchId → { pA, pB }
+  const [addName, setAddName] = useState("");
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState("");
+
+  const [startLoading, setStartLoading] = useState(false);
+  const [startError, setStartError] = useState("");
+
   const [resolving, setResolving] = useState<Record<string, { pA: number; pB: number }>>({});
   const [resolveLoading, setResolveLoading] = useState<string | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Bootstrap: read deviceId from localStorage
   useEffect(() => {
     if (!code) return;
     try {
@@ -75,7 +82,6 @@ export default function OrganiserPage() {
 
   const applySession = useCallback((data: Session) => {
     setSession(data);
-    // Seed resolving state for new conflicts
     setResolving((prev) => {
       const next = { ...prev };
       for (const m of data.matches) {
@@ -87,15 +93,11 @@ export default function OrganiserPage() {
     });
   }, []);
 
-  // Start live updates once we have a deviceId
   useEffect(() => {
     if (!deviceId || !code) return;
-
     fetch(`/api/sessions/${code}`)
-      .then((r) => r.json())
-      .then(applySession)
+      .then((r) => r.json()).then(applySession)
       .catch(() => setSessionError("Failed to load session."));
-
     const es = new EventSource(`/api/sessions/${code}/stream`);
     esRef.current = es;
     es.onmessage = (e) => { try { applySession(JSON.parse(e.data)); } catch { /* ignore */ } };
@@ -107,7 +109,6 @@ export default function OrganiserPage() {
         }, 3000);
       }
     };
-
     return () => {
       es.close();
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -119,8 +120,7 @@ export default function OrganiserPage() {
     setPinLoading(true); setPinError("");
     try {
       const r = await fetch(`/api/sessions/${code}/devices`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ organiserPin: pinInput.trim() }),
       });
       const data = await r.json();
@@ -131,11 +131,40 @@ export default function OrganiserPage() {
     setPinLoading(false);
   }
 
+  async function addPlayerManually() {
+    const name = addName.trim();
+    if (!name || !deviceId) return;
+    setAddLoading(true); setAddError("");
+    try {
+      const r = await fetch(`/api/sessions/${code}/players`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, playerName: name }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setAddError(data.message ?? data.error ?? "Could not add player."); setAddLoading(false); return; }
+      setAddName("");
+    } catch { setAddError("Network error."); }
+    setAddLoading(false);
+  }
+
+  async function lockAndStart() {
+    if (!deviceId) return;
+    setStartLoading(true); setStartError("");
+    try {
+      const r = await fetch(`/api/sessions/${code}/start`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setStartError(data.error ?? "Could not start session."); setStartLoading(false); return; }
+    } catch { setStartError("Network error."); }
+    setStartLoading(false);
+  }
+
   async function startMatch(matchId: string, courtNumber: number) {
     if (!deviceId) return;
     await fetch(`/api/matches/${matchId}/start`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ courtNumber, deviceId }),
     });
   }
@@ -146,14 +175,19 @@ export default function OrganiserPage() {
     setResolveLoading(matchId);
     try {
       await fetch(`/api/matches/${matchId}/score`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, pointsA: pA, pointsB: pB }),
       });
     } finally { setResolveLoading(null); }
   }
 
-  // ── Styles ──────────────────────────────────────────────────────────────────
+  function copyJoinLink() {
+    const url = `${window.location.origin}/join?code=${code}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   const st: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
     card: { width: "100%", maxWidth: 720, background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 18, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", marginTop: 12 },
@@ -164,6 +198,7 @@ export default function OrganiserPage() {
     sectionLabel: { fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginTop: 16, marginBottom: 10 },
     btn: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
     btnOrange: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" as const },
+    btnGreen: { borderRadius: 14, padding: "14px 20px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: GREEN, color: WHITE, whiteSpace: "nowrap" as const },
     courtCard: { borderRadius: 16, padding: 14, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 10 },
     conflictCard: { borderRadius: 16, padding: 14, background: "rgba(255,64,64,0.07)", border: "1px solid rgba(255,64,64,0.3)", marginBottom: 10 },
     queueCard: { borderRadius: 16, padding: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", marginBottom: 10 },
@@ -174,11 +209,22 @@ export default function OrganiserPage() {
     pinInput: { width: "100%", background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "14px 12px", fontSize: 20, fontWeight: 900, textAlign: "center" as const, outline: "none", boxSizing: "border-box" as const },
     errorBox: { marginTop: 10, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
     pillsRow: { display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 12 },
+    shareCard: { marginTop: 12, borderRadius: 16, padding: 14, background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" as const },
+    codeBlock: { fontSize: 28, fontWeight: 1150, color: ORANGE, letterSpacing: 4, lineHeight: 1 },
+    addRow: { display: "flex", gap: 10, alignItems: "center" },
+    addInput: { flex: 1, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "12px 14px", fontSize: 15, fontWeight: 900, outline: "none" },
+    playerPill: { borderRadius: 12, padding: "8px 14px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", fontSize: 14, fontWeight: 900, color: WHITE },
+    lobbyCard: { borderRadius: 18, padding: 18, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)" },
+    startSection: { marginTop: 16, borderRadius: 16, padding: 16, background: "rgba(0,200,80,0.06)", border: "1px solid rgba(0,200,80,0.20)", display: "flex", gap: 14, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const },
+    lbWrap: { marginTop: 4, borderRadius: 18, padding: 14, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 8 },
+    lbHead: { display: "grid", gridTemplateColumns: "40px 1fr 64px 110px 64px", gap: 8, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 10px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
+    lbRow: { display: "grid", gridTemplateColumns: "40px 1fr 64px 110px 64px", gap: 8, alignItems: "center", borderRadius: 12, padding: "10px 10px" },
+    lbRight: { textAlign: "right" as const },
+    hint: { fontSize: 12, opacity: 0.55, color: WARM_WHITE, lineHeight: 1.4 },
   };
 
   if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
 
-  // ── PIN gate ─────────────────────────────────────────────────────────────────
   if (!deviceId) {
     return (
       <div style={st.page}>
@@ -186,21 +232,10 @@ export default function OrganiserPage() {
           <button style={st.btn} onClick={() => router.push("/")}>← Back</button>
           <div style={{ ...st.title, marginTop: 14 }}>Organiser Access</div>
           <div style={{ ...st.sub, marginBottom: 20 }}>Enter the organiser PIN for session <strong style={{ color: ORANGE }}>{code}</strong>.</div>
-          <input
-            style={st.pinInput}
-            value={pinInput}
-            type="password"
-            placeholder="PIN"
-            maxLength={8}
-            autoFocus
-            onChange={(e) => setPinInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") claimOrganiser(); }}
-          />
-          <button
-            style={{ ...st.btnOrange, width: "100%", marginTop: 14, padding: 16, fontSize: 15, opacity: pinLoading ? 0.5 : 1 }}
-            onClick={claimOrganiser}
-            disabled={pinLoading}
-          >
+          <input style={st.pinInput} value={pinInput} type="password" placeholder="PIN" maxLength={8} autoFocus
+            onChange={(e) => setPinInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") claimOrganiser(); }} />
+          <button style={{ ...st.btnOrange, width: "100%", marginTop: 14, padding: 16, fontSize: 15, opacity: pinLoading ? 0.5 : 1 }}
+            onClick={claimOrganiser} disabled={pinLoading}>
             {pinLoading ? "Verifying…" : "Access organiser view"}
           </button>
           {pinError && <div style={st.errorBox}>{pinError}</div>}
@@ -211,26 +246,135 @@ export default function OrganiserPage() {
 
   if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session…{sessionError && ` — ${sessionError}`}</div></div></div>;
 
-  // ── Derived state ─────────────────────────────────────────────────────────────
   const nameById = session.players.reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
   function names(m: Match) {
-    return {
-      a1: nameById[m.teamAPlayer1] ?? "?", a2: nameById[m.teamAPlayer2] ?? "?",
-      b1: nameById[m.teamBPlayer1] ?? "?", b2: nameById[m.teamBPlayer2] ?? "?",
-    };
+    return { a1: nameById[m.teamAPlayer1] ?? "?", a2: nameById[m.teamAPlayer2] ?? "?", b1: nameById[m.teamBPlayer1] ?? "?", b2: nameById[m.teamBPlayer2] ?? "?" };
   }
 
+  const minPlayers = session.courts * 4;
+  const canStart = session.players.length >= minPlayers;
+  const joinUrl = typeof window !== "undefined" ? `${window.location.origin}/join?code=${code}` : `/join?code=${code}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(joinUrl)}&bgcolor=0D1B2A&color=FFFFFF&margin=8`;
+
+  const shareCard = (
+    <div style={st.shareCard}>
+      <div style={{ flex: 1, minWidth: 160 }}>
+        <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 6 }}>Session code</div>
+        <div style={st.codeBlock}>{code}</div>
+        <div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Players join at <strong>/join</strong></div>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center" }}>
+        <button style={{ ...st.btn, background: copied ? "rgba(0,200,80,0.15)" : "rgba(255,255,255,0.07)", borderColor: copied ? "rgba(0,200,80,0.45)" : "rgba(255,255,255,0.14)" }} onClick={copyJoinLink}>
+          {copied ? "✓ Copied!" : "Copy link"}
+        </button>
+        <button style={{ ...st.btn, borderColor: showQR ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.14)", background: showQR ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.07)" }} onClick={() => setShowQR((v) => !v)}>
+          QR code
+        </button>
+      </div>
+      {showQR && (
+        <div style={{ width: "100%", display: "flex", justifyContent: "center", paddingTop: 4 }}>
+          <img src={qrUrl} alt={`Join ${code}`} width={140} height={140} style={{ borderRadius: 12, display: "block" }} />
+        </div>
+      )}
+    </div>
+  );
+
+  // ── LOBBY ──────────────────────────────────────────────────────────────────
+  if (session.status === "LOBBY") {
+    return (
+      <div style={st.page}>
+        <div style={st.card}>
+          <div style={st.row}>
+            <div>
+              <div style={st.title}>Organiser · {session.code}</div>
+              <div style={st.sub}>{session.format} · {session.courts} court{session.courts > 1 ? "s" : ""} · {session.pointsPerMatch} pts · Waiting for players</div>
+            </div>
+            <button style={st.btn} onClick={() => router.push("/")}>Home</button>
+          </div>
+
+          <div style={st.pillsRow}>
+            {pill(`${session.players.length} joined`, "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
+            {pill(`${minPlayers} needed to start`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
+            {session.maxPlayers !== null && pill(`${session.maxPlayers} max`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
+          </div>
+
+          {shareCard}
+          <div style={st.divider} />
+
+          <div style={st.sectionLabel}>
+            Players — {session.players.length}{session.maxPlayers !== null ? ` / ${session.maxPlayers}` : ""}
+          </div>
+          <div style={st.lobbyCard}>
+            {session.players.length === 0 ? (
+              <div style={st.hint}>No players yet — share the code above.</div>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
+                {session.players.map((p) => (
+                  <div key={p.id} style={st.playerPill}>{p.name}</div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={st.sectionLabel}>Add player manually</div>
+          <div style={st.addRow}>
+            <input
+              style={st.addInput}
+              value={addName}
+              placeholder="Player name"
+              maxLength={30}
+              onChange={(e) => setAddName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addPlayerManually(); }}
+            />
+            <button style={{ ...st.btnOrange, opacity: addLoading ? 0.5 : 1 }} onClick={addPlayerManually} disabled={addLoading}>
+              {addLoading ? "Adding…" : "Add"}
+            </button>
+          </div>
+          {addError && <div style={st.errorBox}>{addError}</div>}
+
+          <div style={st.startSection}>
+            <div>
+              <div style={{ fontWeight: 1000, fontSize: 15 }}>
+                {canStart ? "Ready to start!" : `Need ${minPlayers - session.players.length} more player${minPlayers - session.players.length !== 1 ? "s" : ""}`}
+              </div>
+              <div style={st.hint}>Locking entries generates the full match queue.</div>
+            </div>
+            <button
+              style={{ ...st.btnGreen, opacity: canStart && !startLoading ? 1 : 0.4 }}
+              onClick={lockAndStart}
+              disabled={!canStart || startLoading}
+            >
+              {startLoading ? "Starting…" : "Lock & Start →"}
+            </button>
+          </div>
+          {startError && <div style={st.errorBox}>{startError}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // ── ACTIVE / COMPLETE ──────────────────────────────────────────────────────
   const inProgress = session.matches.filter((m) => m.status === "IN_PROGRESS");
   const conflicts = session.matches.filter((m) => m.scoreStatus === "CONFLICT");
   const pending = session.matches.filter((m) => m.status === "PENDING");
   const complete = session.matches.filter((m) => m.status === "COMPLETE");
   const courts = Array.from({ length: session.courts }, (_, i) => i + 1);
 
+  const leaderboard: LeaderRow[] = (() => {
+    const base = new Map<string, LeaderRow>();
+    for (const p of session.players) base.set(p.id, { playerId: p.id, name: p.name, played: 0, pointsFor: 0, pointsAgainst: 0, diff: 0 });
+    for (const m of complete) {
+      const pA = m.pointsA ?? 0; const pB = m.pointsB ?? 0;
+      for (const pid of [m.teamAPlayer1, m.teamAPlayer2]) { const r = base.get(pid); if (r) { r.played++; r.pointsFor += pA; r.pointsAgainst += pB; } }
+      for (const pid of [m.teamBPlayer1, m.teamBPlayer2]) { const r = base.get(pid); if (r) { r.played++; r.pointsFor += pB; r.pointsAgainst += pA; } }
+    }
+    return Array.from(base.values()).map((r) => ({ ...r, diff: r.pointsFor - r.pointsAgainst }))
+      .sort((a, b) => b.diff !== a.diff ? b.diff - a.diff : b.pointsFor !== a.pointsFor ? b.pointsFor - a.pointsFor : a.name.localeCompare(b.name));
+  })();
+
   return (
     <div style={st.page}>
       <div style={st.card}>
-
-        {/* Header */}
         <div style={st.row}>
           <div>
             <div style={st.title}>Organiser · {session.code}</div>
@@ -246,9 +390,9 @@ export default function OrganiserPage() {
           {conflicts.length > 0 && pill(`⚠ ${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""}`, "rgba(255,64,64,0.15)", "rgba(255,64,64,0.4)")}
         </div>
 
+        {shareCard}
         <div style={st.divider} />
 
-        {/* Conflicts */}
         {conflicts.length > 0 && (
           <>
             <div style={st.sectionLabel}>⚠ Conflicts — enter correct score</div>
@@ -272,11 +416,8 @@ export default function OrganiserPage() {
                     <button style={st.stepBtn} onClick={() => updateRv({ pB: Math.max(0, rv.pB - 1) })}>−</button>
                     <span style={st.val}>{rv.pB}</span>
                     <button style={st.stepBtn} onClick={() => updateRv({ pB: rv.pB + 1 })}>+</button>
-                    <button
-                      style={{ ...st.btnOrange, opacity: resolveLoading === m.id ? 0.5 : 1 }}
-                      onClick={() => resolveConflict(m.id)}
-                      disabled={resolveLoading === m.id}
-                    >
+                    <button style={{ ...st.btnOrange, opacity: resolveLoading === m.id ? 0.5 : 1 }}
+                      onClick={() => resolveConflict(m.id)} disabled={resolveLoading === m.id}>
                       {resolveLoading === m.id ? "Saving…" : "Confirm score"}
                     </button>
                   </div>
@@ -287,19 +428,16 @@ export default function OrganiserPage() {
           </>
         )}
 
-        {/* Courts */}
         <div style={st.sectionLabel}>Courts</div>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: session.courts >= 2 ? "repeat(2, minmax(0,1fr))" : "1fr" }}>
           {courts.map((cn) => {
             const m = inProgress.find((x) => x.courtNumber === cn);
-            if (!m) {
-              return (
-                <div key={cn} style={{ ...st.courtCard, opacity: 0.45 }}>
-                  <div style={{ fontWeight: 1000, fontSize: 15, color: ORANGE }}>Court {cn}</div>
-                  <div style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>Open — no active match</div>
-                </div>
-              );
-            }
+            if (!m) return (
+              <div key={cn} style={{ ...st.courtCard, opacity: 0.45 }}>
+                <div style={{ fontWeight: 1000, fontSize: 15, color: ORANGE }}>Court {cn}</div>
+                <div style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>Open — no active match</div>
+              </div>
+            );
             const { a1, a2, b1, b2 } = names(m);
             const pA = m.pointsA ?? 0; const pB = m.pointsB ?? 0;
             const sColor = m.scoreStatus === "CONFLICT" ? RED : m.scoreStatus === "CONFIRMED" ? GREEN : m.scoreStatus === "PENDING" ? WARM_WHITE : ORANGE;
@@ -322,7 +460,6 @@ export default function OrganiserPage() {
           })}
         </div>
 
-        {/* Queue */}
         {pending.length > 0 && (
           <>
             <div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>
@@ -335,12 +472,8 @@ export default function OrganiserPage() {
                     {courts.map((cn) => {
                       const busy = inProgress.some((x) => x.courtNumber === cn);
                       return (
-                        <button
-                          key={cn}
-                          style={{ ...st.btn, opacity: busy ? 0.3 : 1 }}
-                          onClick={() => { if (!busy) startMatch(m.id, cn); }}
-                          disabled={busy}
-                        >
+                        <button key={cn} style={{ ...st.btn, opacity: busy ? 0.3 : 1 }}
+                          onClick={() => { if (!busy) startMatch(m.id, cn); }} disabled={busy}>
                           Start on Court {cn}
                         </button>
                       );
@@ -357,6 +490,34 @@ export default function OrganiserPage() {
             All {complete.length} matches complete 🏆
           </div>
         )}
+
+        <div style={st.divider} />
+
+        <div style={st.sectionLabel}>Leaderboard</div>
+        <div style={st.lbWrap}>
+          <div style={st.lbHead}>
+            <div style={{ textAlign: "center" as const }}>Rank</div>
+            <div>Player</div>
+            <div style={st.lbRight}>Played</div>
+            <div style={st.lbRight}>Points</div>
+            <div style={st.lbRight}>Diff</div>
+          </div>
+          {leaderboard.map((r, idx) => {
+            const isTop3 = idx < 3 && r.played > 0;
+            return (
+              <div key={r.playerId} style={{ ...st.lbRow, background: isTop3 ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.04)", border: `1px solid ${isTop3 ? "rgba(255,107,0,0.30)" : "rgba(255,255,255,0.07)"}` }}>
+                <div style={{ fontSize: 15, fontWeight: 1100, textAlign: "center" as const, color: idx === 0 && r.played > 0 ? ORANGE : WHITE }}>{idx + 1}</div>
+                <div style={{ fontWeight: 950, fontSize: 14 }}>{r.name}</div>
+                <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1000, opacity: 0.8 }}>{r.played}</div>
+                <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1000 }}>{r.pointsFor} – {r.pointsAgainst}</div>
+                <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1100, color: r.diff > 0 ? GREEN : r.diff < 0 ? RED : WHITE }}>{r.diff > 0 ? `+${r.diff}` : r.diff}</div>
+              </div>
+            );
+          })}
+          {complete.length === 0 && (
+            <div style={st.hint}>No completed matches yet.</div>
+          )}
+        </div>
       </div>
     </div>
   );
