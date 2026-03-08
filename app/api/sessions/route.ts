@@ -60,15 +60,15 @@ export async function POST(req: NextRequest) {
 
       // Create players
       const createdPlayers = await Promise.all(
-        players.map((p: { name: string; partnerName?: string }) =>
-          tx.player.create({
-            data: {
-              sessionId: sess.id,
-              name: p.name,
-              partnerName: p.partnerName ?? null,
-            },
-          })
-        )
+        players.map((p: string | { name: string; partnerName?: string }) =>
+        tx.player.create({
+        data: {
+        sessionId: sess.id,
+        name: typeof p === "string" ? p : p.name,
+        partnerName: typeof p === "string" ? null : (p.partnerName ?? null),
+        },
+        })
+    )
       );
 
       // Generate match queue
