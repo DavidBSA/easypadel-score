@@ -487,7 +487,7 @@ export default function MatchPage() {
           <div style={styles.chipRow}>
             <div style={chipStyle(showServeHelper)} onClick={() => setShowServeHelper((v) => !v)}>Serve helper</div>
             <div style={chipStyle(false)} onClick={randomFirstServer}>Random server</div>
-            <div style={chipStyle(false)} onClick={() => router.push("/match/setup")}>Setup</div>
+            <div style={chipStyle(false)} onClick={() => router.push("/")}>Home</div>
           </div>
         </div>
 
@@ -562,7 +562,7 @@ export default function MatchPage() {
         <div style={styles.actionRow}>
           <button style={{ ...styles.smallBtn, opacity: history.length === 0 ? 0.4 : 1 }} onClick={undo} disabled={history.length === 0}>Undo</button>
           <button style={styles.smallBtn} onClick={resetMatch}>Reset</button>
-          <button style={styles.smallBtn} onClick={() => router.push("/match/setup")}>New match</button>
+          <button style={styles.smallBtn} onClick={() => { localStorage.removeItem(STORAGE_MATCH_KEY); router.push("/match/setup"); }}>New match</button>
         </div>
 
         {/* ── Footer ── */}
