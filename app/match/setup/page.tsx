@@ -3,24 +3,29 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const NAVY = "#0F1E2E";
+const BLACK = "#000000";
+const NAVY = "#0D1B2A";
 const WHITE = "#FFFFFF";
-const TEAL = "#00A8A8";
-
-type MatchRules = {
-  goldenPoint: boolean;
-  superTiebreakFinalSet: boolean;
-};
-
-type MatchPayload = {
-  players: string[];
-  mode: "standard";
-  sets: number;
-  rules: MatchRules;
-};
+const ORANGE = "#FF6B00";
+const WARM_WHITE = "#F5F5F5";
 
 const STORAGE_PLAYERS_KEY = "eps_players";
 const STORAGE_MATCH_KEY = "eps_match_payload";
+
+type DeuceMode = "star" | "golden" | "traditional";
+
+type MatchRules = {
+  deuceMode: DeuceMode;
+  tiebreak: boolean;
+  superTiebreak: boolean;
+};
+
+type MatchPayload = {
+  sessionCode: string;
+  players: { slot: string; name: string }[];
+  sets: number;
+  rules: MatchRules;
+};
 
 function safeParseJSON<T>(value: string | null, fallback: T): T {
   try {
@@ -35,18 +40,38 @@ function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, " ");
 }
 
+function makeCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  let suffix = "";
+  for (let i = 0; i < 4; i++) suffix += chars[Math.floor(Math.random() * chars.length)];
+  return `EPSSM-${date}-${suffix}`;
+}
+
+const SLOTS = [
+  { key: "teamA1", label: "Team A — Player 1" },
+  { key: "teamA2", label: "Team A — Player 2" },
+  { key: "teamB1", label: "Team B — Player 1" },
+  { key: "teamB2", label: "Team B — Player 2" },
+];
+
+const DEUCE_OPTIONS: { value: DeuceMode; label: string; desc: string }[] = [
+  { value: "star", label: "Star Point", desc: "Two advantages, then deciding point (FIP 2026)" },
+  { value: "golden", label: "Golden Point", desc: "Deciding point immediately at first deuce" },
+  { value: "traditional", label: "Traditional", desc: "Unlimited advantage until 2-point lead" },
+];
+
 export default function MatchSetupPage() {
   const router = useRouter();
 
   const [savedPlayers, setSavedPlayers] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string[]>(["", "", "", ""]);
-
+  const [selected, setSelected] = useState<Record<string, string>>({
+    teamA1: "", teamA2: "", teamB1: "", teamB2: "",
+  });
   const [sets, setSets] = useState<number>(3);
-
-  // Safer defaults, user can enable if they want.
-  const [goldenPoint, setGoldenPoint] = useState<boolean>(false);
-  const [superTiebreakFinalSet, setSuperTiebreakFinalSet] = useState<boolean>(false);
-
+  const [deuceMode, setDeuceMode] = useState<DeuceMode>("star");
+  const [tiebreak, setTiebreak] = useState<boolean>(true);
+  const [superTiebreak, setSuperTiebreak] = useState<boolean>(true);
   const [newPlayerName, setNewPlayerName] = useState<string>("");
   const [error, setError] = useState<string>("");
 
@@ -54,72 +79,53 @@ export default function MatchSetupPage() {
     const initial = safeParseJSON<string[]>(localStorage.getItem(STORAGE_PLAYERS_KEY), []);
     const cleaned = Array.from(new Set(initial.map(normalizeName).filter(Boolean)));
     setSavedPlayers(cleaned);
-
     if (cleaned.length >= 4) {
-      setSelected([cleaned[0] ?? "", cleaned[1] ?? "", cleaned[2] ?? "", cleaned[3] ?? ""]);
+      setSelected({ teamA1: cleaned[0], teamA2: cleaned[1], teamB1: cleaned[2], teamB2: cleaned[3] });
     }
   }, []);
 
   const canStart = useMemo(() => {
-    const names = selected.map(normalizeName).filter(Boolean);
-    if (names.length !== 4) return false;
-    return new Set(names).size === 4;
+    const names = Object.values(selected).map(normalizeName).filter(Boolean);
+    return names.length === 4 && new Set(names).size === 4;
   }, [selected]);
 
   const rulesSummary = useMemo(() => {
-    const gp = goldenPoint ? "Golden point" : "Advantage";
-    const st =
-      sets === 1
-        ? "No final set rules"
-        : superTiebreakFinalSet
-        ? "Super tiebreak final set"
-        : "Normal final set";
-    return `${gp} , ${st}`;
-  }, [goldenPoint, sets, superTiebreakFinalSet]);
+    const deuce = DEUCE_OPTIONS.find((d) => d.value === deuceMode)?.label ?? "Star Point";
+    const tb = tiebreak ? "Tiebreak at 6-6" : "No tiebreak";
+    const st = sets > 1 && superTiebreak ? "Super tiebreak final set" : null;
+    return [deuce, tb, st].filter(Boolean).join(" · ");
+  }, [deuceMode, tiebreak, superTiebreak, sets]);
 
-  function updateSelected(index: number, value: string) {
+  function updateSelected(slot: string, value: string) {
     setError("");
-    setSelected((prev) => {
-      const next = [...prev];
-      next[index] = value;
-      return next;
-    });
+    setSelected((prev) => ({ ...prev, [slot]: value }));
   }
 
   function addPlayer() {
     const name = normalizeName(newPlayerName);
     if (!name) return;
-
     setError("");
-
     setSavedPlayers((prev) => {
       const next = Array.from(new Set([...prev, name]));
       localStorage.setItem(STORAGE_PLAYERS_KEY, JSON.stringify(next));
       return next;
     });
-
     setNewPlayerName("");
   }
 
   function startMatch() {
-    const names = selected.map(normalizeName).filter(Boolean);
-
-    if (names.length !== 4) {
-      setError("Please select 4 players.");
-      return;
-    }
-    if (new Set(names).size !== 4) {
-      setError("Players must be unique.");
-      return;
-    }
+    const names = Object.values(selected).map(normalizeName).filter(Boolean);
+    if (names.length !== 4) { setError("Please select all 4 players."); return; }
+    if (new Set(names).size !== 4) { setError("All 4 players must be different."); return; }
 
     const payload: MatchPayload = {
-      players: names,
-      mode: "standard",
+      sessionCode: makeCode(),
+      players: SLOTS.map((s) => ({ slot: s.key, name: normalizeName(selected[s.key]) })),
       sets,
       rules: {
-        goldenPoint,
-        superTiebreakFinalSet: sets === 1 ? false : superTiebreakFinalSet,
+        deuceMode,
+        tiebreak,
+        superTiebreak: sets === 1 ? false : superTiebreak,
       },
     };
 
@@ -127,222 +133,310 @@ export default function MatchSetupPage() {
     router.push("/match");
   }
 
-  // Dynamic style helper must NOT live inside a Record<string, CSSProperties>
+  // ─── Dynamic style helpers ────────────────────────────────────────────────
+
   const pillStyle = (active: boolean): React.CSSProperties => ({
-    padding: "12px 12px",
-    borderRadius: 999,
-    border: active ? `1px solid ${TEAL}` : "1px solid rgba(255,255,255,0.18)",
-    background: active ? "rgba(0,168,168,0.16)" : "rgba(255,255,255,0.08)",
-    color: WHITE,
-    fontWeight: 900,
+    padding: "13px 14px",
+    borderRadius: 14,
+    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.12)",
+    background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.05)",
+    color: active ? WHITE : WARM_WHITE,
+    fontWeight: active ? 1000 : 900,
     cursor: "pointer",
-    userSelect: "none",
-    minWidth: 110,
-    textAlign: "center",
+    userSelect: "none" as const,
+    flex: 1,
+    textAlign: "center" as const,
+    fontSize: 14,
+  });
+
+  const deuceCardStyle = (active: boolean): React.CSSProperties => ({
+    borderRadius: 14,
+    padding: "12px 14px",
+    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.10)",
+    background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)",
+    cursor: "pointer",
+    display: "grid",
+    gap: 3,
   });
 
   const styles: Record<string, React.CSSProperties> = {
     page: {
       minHeight: "100vh",
-      background: NAVY,
+      background: BLACK,
       color: WHITE,
       padding: 16,
       display: "flex",
       justifyContent: "center",
+      alignItems: "flex-start",
     },
     card: {
       width: "100%",
       maxWidth: 520,
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      borderRadius: 16,
-      padding: 16,
-      boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+      background: NAVY,
+      border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 20,
+      padding: 18,
+      boxShadow: "0 12px 40px rgba(0,0,0,0.50)",
+      marginTop: 12,
+      marginBottom: 32,
     },
-    title: { fontSize: 22, fontWeight: 800, letterSpacing: 0.2, marginBottom: 4 },
-    subtitle: { opacity: 0.85, marginBottom: 10, fontSize: 13 },
-    summary: {
-      opacity: 0.9,
-      fontSize: 12,
-      fontWeight: 850,
-      background: "rgba(0,0,0,0.18)",
-      border: "1px solid rgba(255,255,255,0.10)",
+    titleRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 10,
+    },
+    title: { fontSize: 22, fontWeight: 1000 },
+    subtitle: { color: WARM_WHITE, opacity: 0.6, fontSize: 13, marginTop: 5 },
+    summaryBar: {
+      marginTop: 12,
       borderRadius: 12,
-      padding: 10,
-      marginBottom: 12,
+      padding: "10px 14px",
+      background: "rgba(255,107,0,0.07)",
+      border: "1px solid rgba(255,107,0,0.18)",
+      fontSize: 12,
+      fontWeight: 900,
+      color: WARM_WHITE,
+      opacity: 0.9,
     },
-    sectionTitle: { fontWeight: 800, marginTop: 14, marginBottom: 10 },
-    row: { display: "flex", gap: 10, alignItems: "center" },
-    grid: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
+    sectionLabel: {
+      fontSize: 11,
+      fontWeight: 1000,
+      letterSpacing: 1.4,
+      opacity: 0.45,
+      textTransform: "uppercase" as const,
+      marginTop: 20,
+      marginBottom: 10,
+    },
+    playerGrid: { display: "grid", gap: 10 },
+    playerRow: { display: "grid", gap: 5 },
+    playerLabel: { fontSize: 12, fontWeight: 1000, opacity: 0.55, letterSpacing: 0.3 },
     select: {
       width: "100%",
-      background: "rgba(255,255,255,0.08)",
+      background: "rgba(255,255,255,0.07)",
       color: WHITE,
-      border: "1px solid rgba(255,255,255,0.16)",
+      border: "1px solid rgba(255,255,255,0.12)",
       borderRadius: 12,
       padding: "14px 12px",
       fontSize: 16,
       outline: "none",
-    },
-    input: {
-      width: "100%",
-      background: "rgba(255,255,255,0.08)",
-      color: WHITE,
-      border: "1px solid rgba(255,255,255,0.16)",
-      borderRadius: 12,
-      padding: "14px 12px",
-      fontSize: 16,
-      outline: "none",
-    },
-    button: {
-      width: "100%",
-      background: TEAL,
-      color: NAVY,
-      border: "none",
-      borderRadius: 14,
-      padding: "16px 14px",
-      fontSize: 18,
       fontWeight: 900,
-      cursor: "pointer",
-      boxShadow: "0 10px 18px rgba(0,168,168,0.18)",
     },
-    buttonSecondary: {
-      background: "rgba(255,255,255,0.10)",
+    teamDivider: {
+      height: 1,
+      background: "rgba(255,107,0,0.15)",
+      margin: "4px 0",
+    },
+    addRow: { display: "flex", gap: 10, alignItems: "center" },
+    input: {
+      flex: 1,
+      background: "rgba(255,255,255,0.07)",
       color: WHITE,
-      border: "1px solid rgba(255,255,255,0.16)",
+      border: "1px solid rgba(255,255,255,0.12)",
       borderRadius: 12,
       padding: "14px 12px",
       fontSize: 16,
-      fontWeight: 800,
-      cursor: "pointer",
-      minWidth: 120,
-      whiteSpace: "nowrap",
+      outline: "none",
+      fontWeight: 900,
     },
-    pillRow: { display: "flex", gap: 10, flexWrap: "wrap" },
+    addBtn: {
+      borderRadius: 12,
+      padding: "14px 16px",
+      fontSize: 15,
+      fontWeight: 1000,
+      cursor: "pointer",
+      border: "none",
+      background: ORANGE,
+      color: WHITE,
+      whiteSpace: "nowrap" as const,
+    },
+    pillRow: { display: "flex", gap: 8 },
+    deuceGrid: { display: "grid", gap: 8 },
+    deuceLabel: { fontSize: 14, fontWeight: 1000 },
+    deuceDesc: { fontSize: 12, opacity: 0.55, color: WARM_WHITE },
     toggle: {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 12,
-      background: "rgba(255,255,255,0.07)",
-      border: "1px solid rgba(255,255,255,0.14)",
+      background: "rgba(255,255,255,0.04)",
+      border: "1px solid rgba(255,255,255,0.09)",
       borderRadius: 14,
-      padding: 12,
+      padding: "12px 14px",
     },
-    small: { fontSize: 12, opacity: 0.85, marginTop: 4 },
+    toggleLabel: { fontWeight: 900, fontSize: 14 },
+    toggleDesc: { fontSize: 12, opacity: 0.5, color: WARM_WHITE, marginTop: 3 },
+    divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "16px 0" },
+    startBtn: {
+      width: "100%",
+      background: ORANGE,
+      color: WHITE,
+      border: "none",
+      borderRadius: 16,
+      padding: "18px 14px",
+      fontSize: 18,
+      fontWeight: 1000,
+      cursor: "pointer",
+      marginTop: 20,
+      letterSpacing: 0.3,
+    },
+    backBtn: {
+      borderRadius: 14,
+      padding: "12px 14px",
+      fontSize: 15,
+      fontWeight: 950,
+      cursor: "pointer",
+      border: "1px solid rgba(255,255,255,0.14)",
+      background: "rgba(255,255,255,0.07)",
+      color: WHITE,
+      whiteSpace: "nowrap" as const,
+    },
+    small: { fontSize: 12, color: WARM_WHITE, opacity: 0.5, marginTop: 6, lineHeight: 1.35 },
     error: {
       marginTop: 12,
-      background: "rgba(255,64,64,0.12)",
+      background: "rgba(255,64,64,0.10)",
       border: "1px solid rgba(255,64,64,0.30)",
       color: WHITE,
-      padding: 10,
+      padding: 12,
       borderRadius: 12,
-      fontWeight: 800,
+      fontWeight: 900,
+      fontSize: 13,
     },
-    divider: { height: 1, background: "rgba(255,255,255,0.10)", margin: "14px 0" },
   };
 
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <div style={styles.title}>Standard Match Setup</div>
-        <div style={styles.subtitle}>Pick 4 players, pick sets, then start scoring.</div>
 
-        <div style={styles.summary}>Rules: {rulesSummary}</div>
+        {/* ── Header ── */}
+        <div style={styles.titleRow}>
+          <div>
+            <div style={styles.title}>Match Setup</div>
+            <div style={styles.subtitle}>4 players · Pick rules · Start scoring</div>
+          </div>
+          <button style={styles.backBtn} onClick={() => router.push("/")}>Home</button>
+        </div>
 
-        <div style={styles.sectionTitle}>Players</div>
-        <div style={styles.grid}>
-          {["Player 1", "Player 2", "Player 3", "Player 4"].map((label, i) => (
-            <div key={label}>
-              <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 6, fontWeight: 800 }}>{label}</div>
-              <select style={styles.select} value={selected[i]} onChange={(e) => updateSelected(i, e.target.value)}>
-                <option value="">Select player</option>
-                {savedPlayers.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
+        <div style={styles.summaryBar}>
+          {sets === 1 ? "1 set" : `Best of ${sets}`} · {rulesSummary}
+        </div>
+
+        {/* ── Players ── */}
+        <div style={styles.sectionLabel}>Players</div>
+        <div style={styles.playerGrid}>
+          {SLOTS.map((slot, i) => (
+            <React.Fragment key={slot.key}>
+              {i === 2 && <div style={styles.teamDivider} />}
+              <div style={styles.playerRow}>
+                <div style={styles.playerLabel}>{slot.label}</div>
+                <select
+                  style={styles.select}
+                  value={selected[slot.key]}
+                  onChange={(e) => updateSelected(slot.key, e.target.value)}
+                >
+                  <option value="">Select player</option>
+                  {savedPlayers.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+            </React.Fragment>
+          ))}
+        </div>
+
+        {/* ── Add player ── */}
+        <div style={styles.sectionLabel}>Add new player</div>
+        <div style={styles.addRow}>
+          <input
+            style={styles.input}
+            value={newPlayerName}
+            placeholder="Player name"
+            onChange={(e) => setNewPlayerName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addPlayer(); }}
+          />
+          <button style={styles.addBtn} onClick={addPlayer}>Add</button>
+        </div>
+        <div style={styles.small}>Names saved locally and reused across matches and sessions.</div>
+
+        <div style={styles.divider} />
+
+        {/* ── Sets ── */}
+        <div style={styles.sectionLabel}>Number of sets</div>
+        <div style={styles.pillRow}>
+          {[1, 3, 5].map((n) => (
+            <div key={n} style={pillStyle(sets === n)} onClick={() => setSets(n)}>
+              {n === 1 ? "1 set" : `Best of ${n}`}
             </div>
           ))}
         </div>
 
         <div style={styles.divider} />
 
-        <div style={styles.sectionTitle}>Add player</div>
-        <div style={styles.row}>
-          <input
-            style={styles.input}
-            value={newPlayerName}
-            placeholder="Type name"
-            onChange={(e) => setNewPlayerName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") addPlayer();
-            }}
-          />
-          <button style={styles.buttonSecondary} onClick={addPlayer}>
-            Add
-          </button>
-        </div>
-        <div style={styles.small}>Saved locally on this device.</div>
-
-        <div style={styles.divider} />
-
-        <div style={styles.sectionTitle}>Number of sets</div>
-        <div style={styles.pillRow}>
-          <div style={pillStyle(sets === 1)} onClick={() => setSets(1)}>
-            1 set
-          </div>
-          <div style={pillStyle(sets === 3)} onClick={() => setSets(3)}>
-            Best of 3
-          </div>
-          <div style={pillStyle(sets === 5)} onClick={() => setSets(5)}>
-            Best of 5
-          </div>
+        {/* ── Deuce mode ── */}
+        <div style={styles.sectionLabel}>Deuce rule</div>
+        <div style={styles.deuceGrid}>
+          {DEUCE_OPTIONS.map((opt) => (
+            <div
+              key={opt.value}
+              style={deuceCardStyle(deuceMode === opt.value)}
+              onClick={() => setDeuceMode(opt.value)}
+            >
+              <div style={styles.deuceLabel}>{opt.label}</div>
+              <div style={styles.deuceDesc}>{opt.desc}</div>
+            </div>
+          ))}
         </div>
 
         <div style={styles.divider} />
 
-        <div style={styles.sectionTitle}>Rules</div>
+        {/* ── Tiebreak toggles ── */}
+        <div style={styles.sectionLabel}>Tiebreak rules</div>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={styles.toggle}>
             <div>
-              <div style={{ fontWeight: 900 }}>Golden point at deuce</div>
-              <div style={styles.small}>At 40 40, next point wins the game.</div>
+              <div style={styles.toggleLabel}>Tiebreak at 6-6</div>
+              <div style={styles.toggleDesc}>First to 7 points, win by 2</div>
             </div>
             <input
-              aria-label="Golden point"
               type="checkbox"
-              checked={goldenPoint}
-              onChange={(e) => setGoldenPoint(e.target.checked)}
-              style={{ transform: "scale(1.3)" }}
+              checked={tiebreak}
+              onChange={(e) => setTiebreak(e.target.checked)}
+              style={{ transform: "scale(1.4)", accentColor: ORANGE }}
+              aria-label="Tiebreak at 6-6"
             />
           </div>
 
-          <div style={{ ...styles.toggle, opacity: sets === 1 ? 0.55 : 1 }}>
+          <div style={{ ...styles.toggle, opacity: sets === 1 ? 0.45 : 1 }}>
             <div>
-              <div style={{ fontWeight: 900 }}>Super tiebreak as final set</div>
-              <div style={styles.small}>Final set becomes first to 10, win by 2.</div>
-              {sets === 1 ? <div style={styles.small}>Not used for 1 set matches.</div> : null}
+              <div style={styles.toggleLabel}>Super tiebreak — final set</div>
+              <div style={styles.toggleDesc}>
+                {sets === 1
+                  ? "Not applicable for 1 set matches"
+                  : "Final set replaced by first to 10, win by 2"}
+              </div>
             </div>
             <input
-              aria-label="Super tiebreak final set"
               type="checkbox"
-              checked={superTiebreakFinalSet}
-              onChange={(e) => setSuperTiebreakFinalSet(e.target.checked)}
-              style={{ transform: "scale(1.3)" }}
+              checked={sets === 1 ? false : superTiebreak}
+              onChange={(e) => setSuperTiebreak(e.target.checked)}
               disabled={sets === 1}
+              style={{ transform: "scale(1.4)", accentColor: ORANGE }}
+              aria-label="Super tiebreak final set"
             />
           </div>
         </div>
 
-        {error ? <div style={styles.error}>{error}</div> : null}
+        {error && <div style={styles.error}>{error}</div>}
 
-        <div style={{ marginTop: 16 }}>
-          <button style={{ ...styles.button, opacity: canStart ? 1 : 0.45 }} onClick={startMatch} disabled={!canStart}>
-            Start match
-          </button>
-        </div>
+        {/* ── Start ── */}
+        <button
+          style={{ ...styles.startBtn, opacity: canStart ? 1 : 0.4 }}
+          onClick={startMatch}
+          disabled={!canStart}
+        >
+          Start match →
+        </button>
+
       </div>
     </div>
   );
