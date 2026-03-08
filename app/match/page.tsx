@@ -148,20 +148,18 @@ export default function MatchPage() {
   }
 
   function randomFirstServer() {
-    setState((prev) => {
-      pushHistory(prev);
-      const firstTeam: Team = Math.random() < 0.5 ? "A" : "B";
-      const a: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
-      const b: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
-      return {
-        ...prev,
-        servingTeam: firstTeam,
-        nextServerA: a,
-        nextServerB: b,
-        tbServingTeam: prev.isTiebreak ? firstTeam : prev.tbServingTeam,
-        tbPointsLeftInTurn: prev.isTiebreak ? 1 : prev.tbPointsLeftInTurn,
-      };
-    });
+    const firstTeam: Team = Math.random() < 0.5 ? "A" : "B";
+    const a: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
+    const b: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
+    setHistory((h) => [...h, state]);
+    setState((prev) => ({
+      ...prev,
+      servingTeam: firstTeam,
+      nextServerA: a,
+      nextServerB: b,
+      tbServingTeam: prev.isTiebreak ? firstTeam : prev.tbServingTeam,
+      tbPointsLeftInTurn: prev.isTiebreak ? 1 : prev.tbPointsLeftInTurn,
+    }));
   }
 
   const teamAPlayers = useMemo(() => {
