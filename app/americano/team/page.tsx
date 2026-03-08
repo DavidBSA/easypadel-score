@@ -24,11 +24,16 @@ function defaultTeams(): TeamDraft[] {
   ];
 }
 
+function isEvenServeDistribution(pointsPerMatch: number, servesPerRotation: number): boolean {
+  return pointsPerMatch % (servesPerRotation * 4) === 0;
+}
+
 export default function TeamAmericanoSetupPage() {
   const router = useRouter();
   const [teams, setTeams] = useState<TeamDraft[]>(defaultTeams);
   const [courts, setCourts] = useState(1);
   const [pointsPerMatch, setPointsPerMatch] = useState(21);
+  const [servesPerRotation, setServesPerRotation] = useState(4);
   const [error, setError] = useState("");
   const [existingCode, setExistingCode] = useState<string | null>(null);
 
@@ -75,6 +80,7 @@ export default function TeamAmericanoSetupPage() {
       createdAtISO: new Date().toISOString(),
       courts,
       pointsPerMatch,
+      servesPerRotation,
       currentRound: 1,
       rounds: [],
       teams: teams.map((t) => ({
@@ -88,6 +94,20 @@ export default function TeamAmericanoSetupPage() {
     router.push("/americano/team/session");
   }
 
+  const evenServes = isEvenServeDistribution(pointsPerMatch, servesPerRotation);
+
+  const serveChipStyle = (active: boolean): React.CSSProperties => ({
+    borderRadius: 12,
+    padding: "10px 18px",
+    fontSize: 14,
+    fontWeight: 1000,
+    cursor: "pointer",
+    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
+    background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
+    color: active ? WHITE : WARM_WHITE,
+    whiteSpace: "nowrap" as const,
+  });
+
   const styles: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
     card: { width: "100%", maxWidth: 680, background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 18, boxShadow: "0 12px 40px rgba(0,0,0,0.50)", marginTop: 12 },
@@ -96,10 +116,9 @@ export default function TeamAmericanoSetupPage() {
     subtitle: { color: WARM_WHITE, opacity: 0.6, fontSize: 13, marginTop: 5, lineHeight: 1.35 },
     btn: { borderRadius: 14, padding: "12px 14px", fontSize: 15, fontWeight: 950, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
     btnPrimary: { borderRadius: 14, padding: "14px 16px", fontSize: 16, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, width: "100%", textAlign: "center" as const },
-    btnOutline: { borderRadius: 14, padding: "13px 16px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: `1px solid ${ORANGE}`, background: "rgba(255,107,0,0.08)", color: ORANGE, width: "100%", textAlign: "center" as const },
     divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "18px 0" },
     sectionLabel: { fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginBottom: 10 },
-    settingsRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+    settingsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
     settingBox: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14 },
     settingLabel: { fontSize: 12, opacity: 0.55, fontWeight: 900, marginBottom: 10 },
     stepper: { display: "flex", alignItems: "center", gap: 14 },
@@ -118,6 +137,8 @@ export default function TeamAmericanoSetupPage() {
     resumeBanner: { borderRadius: 14, padding: "14px 16px", background: "rgba(255,107,0,0.08)", border: "1px solid rgba(255,107,0,0.28)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" as const },
     resumeText: { fontSize: 14, fontWeight: 900 },
     resumeCode: { color: ORANGE, fontWeight: 1100 },
+    serveHintEven: { marginTop: 10, borderRadius: 12, padding: "10px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
+    serveHintOdd: { marginTop: 10, borderRadius: 12, padding: "10px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
   };
 
   return (
@@ -136,12 +157,8 @@ export default function TeamAmericanoSetupPage() {
           <>
             <div style={styles.divider} />
             <div style={styles.resumeBanner}>
-              <div style={styles.resumeText}>
-                Active session <span style={styles.resumeCode}>{existingCode}</span> found
-              </div>
-              <button style={{ ...styles.btn, padding: "10px 14px", fontSize: 14 }} onClick={() => router.push("/americano/team/session")}>
-                Resume →
-              </button>
+              <div style={styles.resumeText}>Active session <span style={styles.resumeCode}>{existingCode}</span> found</div>
+              <button style={{ ...styles.btn, padding: "10px 14px", fontSize: 14 }} onClick={() => router.push("/americano/team/session")}>Resume →</button>
             </div>
           </>
         )}
@@ -150,7 +167,7 @@ export default function TeamAmericanoSetupPage() {
 
         {/* Settings */}
         <div style={styles.sectionLabel}>Session settings</div>
-        <div style={styles.settingsRow}>
+        <div style={styles.settingsGrid}>
           <div style={styles.settingBox}>
             <div style={styles.settingLabel}>Courts</div>
             <div style={styles.stepper}>
@@ -169,6 +186,27 @@ export default function TeamAmericanoSetupPage() {
           </div>
         </div>
 
+        {/* Serves per rotation */}
+        <div style={{ marginTop: 14 }}>
+          <div style={styles.sectionLabel}>Serves before rotation</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            {[2, 4].map((n) => (
+              <div key={n} style={serveChipStyle(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>
+                {n} points per serve
+              </div>
+            ))}
+          </div>
+          {evenServes ? (
+            <div style={styles.serveHintEven}>
+              ✓ Equal serves for all players ({pointsPerMatch} ÷ {servesPerRotation * 4} = {pointsPerMatch / (servesPerRotation * 4)})
+            </div>
+          ) : (
+            <div style={styles.serveHintOdd}>
+              ⚠ Player 4 gets +1 serve — {pointsPerMatch} pts doesn't divide evenly by {servesPerRotation * 4}. No draws guaranteed.
+            </div>
+          )}
+        </div>
+
         <div style={styles.divider} />
 
         {/* Teams */}
@@ -182,66 +220,33 @@ export default function TeamAmericanoSetupPage() {
             <div key={team.tempId} style={styles.teamCard}>
               <div style={styles.teamCardHeader}>
                 <div style={styles.teamNum}>Team {idx + 1}</div>
-                <button
-                  style={{ ...styles.removeBtn, opacity: teams.length <= 2 ? 0.25 : 1 }}
-                  onClick={() => removeTeam(team.tempId)}
-                  disabled={teams.length <= 2}
-                >
-                  ✕
-                </button>
+                <button style={{ ...styles.removeBtn, opacity: teams.length <= 2 ? 0.25 : 1 }} onClick={() => removeTeam(team.tempId)} disabled={teams.length <= 2}>✕</button>
               </div>
               <div>
                 <div style={styles.inputLabel}>Team name (optional)</div>
-                <input
-                  style={styles.input}
-                  placeholder={`${team.player1 || "Player 1"} & ${team.player2 || "Player 2"}`}
-                  value={team.name}
-                  onChange={(e) => updateTeam(team.tempId, "name", e.target.value)}
-                />
+                <input style={styles.input} placeholder={`${team.player1 || "Player 1"} & ${team.player2 || "Player 2"}`} value={team.name} onChange={(e) => updateTeam(team.tempId, "name", e.target.value)} />
               </div>
               <div style={styles.playerRow}>
                 <div>
                   <div style={styles.inputLabel}>Player 1</div>
-                  <input
-                    style={styles.input}
-                    placeholder="Name"
-                    value={team.player1}
-                    onChange={(e) => updateTeam(team.tempId, "player1", e.target.value)}
-                  />
+                  <input style={styles.input} placeholder="Name" value={team.player1} onChange={(e) => updateTeam(team.tempId, "player1", e.target.value)} />
                 </div>
                 <div>
                   <div style={styles.inputLabel}>Player 2</div>
-                  <input
-                    style={styles.input}
-                    placeholder="Name"
-                    value={team.player2}
-                    onChange={(e) => updateTeam(team.tempId, "player2", e.target.value)}
-                  />
+                  <input style={styles.input} placeholder="Name" value={team.player2} onChange={(e) => updateTeam(team.tempId, "player2", e.target.value)} />
                 </div>
               </div>
             </div>
           ))}
-
-          <button
-            style={{ ...styles.addBtn, opacity: teams.length >= 12 ? 0.4 : 1 }}
-            onClick={addTeam}
-            disabled={teams.length >= 12}
-          >
-            + Add team
-          </button>
+          <button style={{ ...styles.addBtn, opacity: teams.length >= 12 ? 0.4 : 1 }} onClick={addTeam} disabled={teams.length >= 12}>+ Add team</button>
         </div>
 
         {error && <div style={styles.error}>{error}</div>}
 
         <div style={styles.divider} />
 
-        <button style={styles.btnPrimary} onClick={startSession}>
-          Start session →
-        </button>
-
-        <div style={{ ...styles.hint, marginTop: 10, textAlign: "center" as const }}>
-          Extra teams rotate as sit-outs. Partners stay fixed throughout.
-        </div>
+        <button style={styles.btnPrimary} onClick={startSession}>Start session →</button>
+        <div style={{ ...styles.hint, marginTop: 10, textAlign: "center" as const }}>Extra teams rotate as sit-outs. Partners stay fixed throughout.</div>
 
       </div>
     </div>

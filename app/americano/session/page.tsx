@@ -40,6 +40,7 @@ type AmericanoSession = {
   currentRound: number;
   rounds: Round[];
   pointsPerMatch?: number;
+  servesPerRotation?: number;
 };
 
 type Score = CourtMatch["score"];
@@ -107,12 +108,15 @@ function addPairCount(map: Map<string, Map<string, number>>, a: string, b: strin
   map.get(b)!.set(a, (map.get(b)!.get(a) ?? 0) + 1);
 }
 
-function computeServingTeam(first: Team, totalPlayed: number, pointsPerMatch: number): Team {
-  const remainder = pointsPerMatch % 4;
-  const firstTurn = remainder === 0 ? 4 : 4 + remainder;
-  if (totalPlayed < firstTurn) return first;
-  const turnIndexAfterFirst = Math.floor((totalPlayed - firstTurn) / 4) + 1;
-  return turnIndexAfterFirst % 2 === 0 ? first : otherTeam(first);
+// Serve rotates every servesPerRotation points, alternating between the two teams.
+function computeServingTeam(first: Team, totalPlayed: number, servesPerRotation: number): Team {
+  const rotationIndex = Math.floor(totalPlayed / servesPerRotation);
+  return rotationIndex % 2 === 0 ? first : otherTeam(first);
+}
+
+// Returns true if all 4 players get equal serves for the given points total.
+function isEvenServeDistribution(pointsPerMatch: number, servesPerRotation: number): boolean {
+  return pointsPerMatch % (servesPerRotation * 4) === 0;
 }
 
 // ─── Round Generator ──────────────────────────────────────────────────────────
@@ -130,7 +134,6 @@ function buildNextRound(session: AmericanoSession): AmericanoSession {
   const partnerCount = new Map<string, Map<string, number>>();
   const opponentCount = new Map<string, Map<string, number>>();
   const sitOutCount = new Map<string, number>();
-  // Track how many times each player has played on each court number
   const courtPlayCount = new Map<string, Map<number, number>>();
   for (const p of players) {
     partnerCount.set(p.id, new Map());
@@ -147,7 +150,6 @@ function buildNextRound(session: AmericanoSession): AmericanoSession {
       addPairCount(partnerCount, m.teamA[0], m.teamA[1]);
       addPairCount(partnerCount, m.teamB[0], m.teamB[1]);
       for (const a of m.teamA) for (const b of m.teamB) addPairCount(opponentCount, a, b);
-      // Record court history for all four players in this match
       for (const pid of [m.teamA[0], m.teamA[1], m.teamB[0], m.teamB[1]]) {
         const counts = courtPlayCount.get(pid)!;
         counts.set(m.courtNumber, (counts.get(m.courtNumber) ?? 0) + 1);
@@ -180,7 +182,6 @@ function buildNextRound(session: AmericanoSession): AmericanoSession {
       score += (partnerCount.get(m.teamA[0])?.get(m.teamA[1]) ?? 0) * PARTNER_PENALTY;
       score += (partnerCount.get(m.teamB[0])?.get(m.teamB[1]) ?? 0) * PARTNER_PENALTY;
       for (const a of m.teamA) for (const b of m.teamB) score += (opponentCount.get(a)?.get(b) ?? 0) * OPPONENT_PENALTY;
-      // Court rotation: penalise assigning a player to a court they've used before
       for (const pid of [...m.teamA, ...m.teamB]) {
         score += (courtPlayCount.get(pid)?.get(m.courtNumber) ?? 0) * COURT_PENALTY;
       }
@@ -229,6 +230,7 @@ export default function AmericanoSessionPage() {
       const migrated: AmericanoSession = {
         ...s,
         pointsPerMatch: typeof s.pointsPerMatch === "number" ? s.pointsPerMatch : 21,
+        servesPerRotation: typeof s.servesPerRotation === "number" ? s.servesPerRotation : 4,
         rounds: s.rounds.map((r) => ({
           ...r,
           matches: r.matches.map((m) => ({
@@ -274,6 +276,12 @@ export default function AmericanoSessionPage() {
 
   const isLastRound = useMemo(() => currentRoundIndex >= roundNumbers.length - 1, [currentRoundIndex, roundNumbers]);
   const pointsPerMatch = useMemo(() => session?.pointsPerMatch ?? 21, [session]);
+  const servesPerRotation = useMemo(() => session?.servesPerRotation ?? 4, [session]);
+
+  const evenServes = useMemo(
+    () => isEvenServeDistribution(pointsPerMatch, servesPerRotation),
+    [pointsPerMatch, servesPerRotation]
+  );
 
   const allMatchesComplete = useMemo(() => {
     if (!currentRound) return false;
@@ -421,41 +429,39 @@ export default function AmericanoSessionPage() {
   // ─── Styles ───────────────────────────────────────────────────────────────
 
   const lbRowStyle = (isTop3: boolean): React.CSSProperties => ({
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 14, padding: 12,
     background: isTop3 ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)",
     border: isTop3 ? "1px solid rgba(255,107,0,0.35)" : "1px solid rgba(255,255,255,0.08)",
-    display: "grid",
-    gridTemplateColumns: "44px 1fr 80px 110px 80px",
-    gap: 10,
-    alignItems: "center",
+    display: "grid", gridTemplateColumns: "44px 1fr 80px 110px 80px", gap: 10, alignItems: "center",
   });
 
   const styles: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
     card: { width: "100%", maxWidth: 980, background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 16, boxShadow: "0 12px 40px rgba(0,0,0,0.50)", marginTop: 12 },
-    titleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" },
+    titleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
     title: { fontSize: 22, fontWeight: 1000 },
     subtitle: { color: WARM_WHITE, opacity: 0.6, fontSize: 13, marginTop: 5, lineHeight: 1.3 },
-    topControls: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end" },
-    btn: { borderRadius: 14, padding: "12px 14px", fontSize: 15, fontWeight: 950, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" },
-    btnPrimary: { borderRadius: 14, padding: "12px 16px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" },
+    topControls: { display: "flex", gap: 10, flexWrap: "wrap" as const, alignItems: "center", justifyContent: "flex-end" },
+    btn: { borderRadius: 14, padding: "12px 14px", fontSize: 15, fontWeight: 950, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
+    btnPrimary: { borderRadius: 14, padding: "12px 16px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" as const },
     sectionLabel: { fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginTop: 16, marginBottom: 8 },
-    settingsRow: { marginTop: 12, borderRadius: 16, padding: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" },
-    input: { width: 100, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "12px", fontSize: 16, outline: "none", fontWeight: 900, textAlign: "center" },
-    chip: { borderRadius: 999, padding: "10px 14px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: WHITE, fontWeight: 950, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", fontSize: 13 },
-    infoCard: { marginTop: 12, borderRadius: 14, padding: "12px 16px", background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)", display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" },
+    settingsRow: { marginTop: 12, borderRadius: 16, padding: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 12, flexWrap: "wrap" as const, alignItems: "flex-start", justifyContent: "space-between" },
+    input: { width: 100, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "12px", fontSize: 16, outline: "none", fontWeight: 900, textAlign: "center" as const },
+    chip: { borderRadius: 999, padding: "10px 14px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: WHITE, fontWeight: 950, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const, fontSize: 13 },
+    infoCard: { marginTop: 12, borderRadius: 14, padding: "12px 16px", background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)", display: "flex", gap: 20, flexWrap: "wrap" as const, alignItems: "center" },
     infoItem: { display: "grid", gap: 2 },
     infoLabel: { fontSize: 11, opacity: 0.6, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: 0.5 },
     infoValue: { fontSize: 15, fontWeight: 1050 },
     warning: { marginTop: 10, borderRadius: 14, padding: 12, background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.24)", fontSize: 12, fontWeight: 900, lineHeight: 1.35, color: WHITE },
+    serveHintEven: { marginTop: 10, borderRadius: 14, padding: "10px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
+    serveHintOdd: { marginTop: 10, borderRadius: 14, padding: "10px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
     grid: { display: "grid", gap: 12, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
     tile: { borderRadius: 18, padding: 14, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 10 },
-    tileHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" },
+    tileHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
     courtTitle: { fontWeight: 1000, color: ORANGE, letterSpacing: 0.2 },
-    statusPill: { borderRadius: 999, padding: "7px 10px", fontSize: 12, fontWeight: 1000, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", whiteSpace: "nowrap" },
+    statusPill: { borderRadius: 999, padding: "7px 10px", fontSize: 12, fontWeight: 1000, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", whiteSpace: "nowrap" as const },
     teamLine: { fontWeight: 900, opacity: 0.88, lineHeight: 1.35, fontSize: 14 },
-    serveHint: { fontSize: 12, fontWeight: 1000, color: ORANGE, lineHeight: 1.3 },
+    serveHintInline: { fontSize: 12, fontWeight: 1000, color: ORANGE, lineHeight: 1.3 },
     pointsRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
     pointsBox: { borderRadius: 16, padding: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 8 },
     boxTitle: { fontWeight: 1000, fontSize: 13, opacity: 0.85 },
@@ -469,14 +475,14 @@ export default function AmericanoSessionPage() {
     hint: { fontSize: 12, opacity: 0.55, lineHeight: 1.35, color: WARM_WHITE },
     divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "12px 0" },
     leaderboardWrap: { marginTop: 14, borderRadius: 18, padding: 14, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 10 },
-    lbHeaderRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 10, flexWrap: "wrap" },
+    lbHeaderRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 10, flexWrap: "wrap" as const },
     lbTitle: { fontWeight: 1000, fontSize: 15, color: ORANGE },
     lbMeta: { fontSize: 12, opacity: 0.6, fontWeight: 850 },
     lbHead: { display: "grid", gridTemplateColumns: "44px 1fr 80px 110px 80px", gap: 10, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 12px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
-    lbCellRight: { textAlign: "right" },
-    lbRank: { fontSize: 16, fontWeight: 1100, color: WHITE, textAlign: "center" },
+    lbCellRight: { textAlign: "right" as const },
+    lbRank: { fontSize: 16, fontWeight: 1100, color: WHITE, textAlign: "center" as const },
     lbName: { fontSize: 15, fontWeight: 1050 },
-    lbNum: { fontSize: 14, fontWeight: 1050, textAlign: "right" },
+    lbNum: { fontSize: 14, fontWeight: 1050, textAlign: "right" as const },
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -514,7 +520,7 @@ export default function AmericanoSessionPage() {
           <div>
             <div style={styles.title}>Session {session.code}</div>
             <div style={styles.subtitle}>
-              Round {session.currentRound} · {session.courts} court{session.courts > 1 ? "s" : ""} · {pointsPerMatch} pts
+              Round {session.currentRound} · {session.courts} court{session.courts > 1 ? "s" : ""} · {pointsPerMatch} pts · {servesPerRotation} pts/serve
             </div>
           </div>
           <div style={styles.topControls}>
@@ -530,7 +536,7 @@ export default function AmericanoSessionPage() {
             <div style={{ fontWeight: 1000, fontSize: 14 }}>Points per match</div>
             <div style={styles.hint}>Total points shared by both teams. e.g. 16, 21, 32</div>
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const, justifyContent: "flex-end" }}>
             <input
               style={styles.input}
               value={String(pointsPerMatch)}
@@ -546,26 +552,25 @@ export default function AmericanoSessionPage() {
             </div>
             <div style={styles.chip} onClick={randomFirstServeForRound}>Random first serve</div>
           </div>
+
+          {/* Serve distribution hint */}
+          <div style={{ width: "100%" }}>
+            {evenServes ? (
+              <div style={styles.serveHintEven}>✓ Equal serves for all players</div>
+            ) : (
+              <div style={styles.serveHintOdd}>
+                ⚠ Player 4 gets +1 serve — {pointsPerMatch} pts doesn't divide evenly by {servesPerRotation * 4}. No draws guaranteed.
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Session info card ── */}
         <div style={styles.infoCard}>
-          <div style={styles.infoItem}>
-            <div style={styles.infoLabel}>Rounds</div>
-            <div style={styles.infoValue}>{roundNumbers.length}</div>
-          </div>
-          <div style={styles.infoItem}>
-            <div style={styles.infoLabel}>Players</div>
-            <div style={styles.infoValue}>{session.players.length}</div>
-          </div>
-          <div style={styles.infoItem}>
-            <div style={styles.infoLabel}>Courts</div>
-            <div style={styles.infoValue}>{session.courts}</div>
-          </div>
-          <div style={styles.infoItem}>
-            <div style={styles.infoLabel}>Sitting out</div>
-            <div style={styles.infoValue}>{sitOutNames.length === 0 ? "None" : sitOutNames.join(", ")}</div>
-          </div>
+          <div style={styles.infoItem}><div style={styles.infoLabel}>Rounds</div><div style={styles.infoValue}>{roundNumbers.length}</div></div>
+          <div style={styles.infoItem}><div style={styles.infoLabel}>Players</div><div style={styles.infoValue}>{session.players.length}</div></div>
+          <div style={styles.infoItem}><div style={styles.infoLabel}>Courts</div><div style={styles.infoValue}>{session.courts}</div></div>
+          <div style={styles.infoItem}><div style={styles.infoLabel}>Sitting out</div><div style={styles.infoValue}>{sitOutNames.length === 0 ? "None" : sitOutNames.join(", ")}</div></div>
         </div>
 
         {/* ── Warning ── */}
@@ -591,7 +596,9 @@ export default function AmericanoSessionPage() {
               const pB = typeof m.score.pointsB === "number" ? m.score.pointsB : 0;
               const totalPlayed = pA + pB;
               const firstServe = m.score.firstServeTeam ?? "A";
-              const servingTeam = computeServingTeam(firstServe, totalPlayed, pointsPerMatch);
+              const servingTeam = computeServingTeam(firstServe, totalPlayed, servesPerRotation);
+              const firstServeLabel = firstServe === "A" ? `${a1} / ${a2}` : `${b1} / ${b2}`;
+              const servingLabel = servingTeam === "A" ? `${a1} / ${a2}` : `${b1} / ${b2}`;
 
               return (
                 <div key={m.courtNumber} style={{ ...styles.tile, borderColor: m.score.isComplete ? "rgba(255,107,0,0.35)" : "rgba(255,255,255,0.08)" }}>
@@ -606,8 +613,8 @@ export default function AmericanoSessionPage() {
                   <div style={styles.teamLine}>Team B: {b1}, {b2}</div>
 
                   {showServeHelper && (
-                    <div style={styles.serveHint}>
-                      Serving: Team {servingTeam} · First serve: Team {firstServe}
+                    <div style={styles.serveHintInline}>
+                      Serving: {servingLabel} · First serve: {firstServeLabel}
                     </div>
                   )}
 
@@ -638,13 +645,14 @@ export default function AmericanoSessionPage() {
                     <button style={styles.tinyBtn} onClick={() => resetMatch(currentRound.roundNumber, m.courtNumber)}>Reset</button>
                   </div>
 
+                  {/* Coin toss row */}
                   <div style={styles.tinyRow}>
-                    <button style={styles.tinyBtn} onClick={() => setFirstServe(currentRound.roundNumber, m.courtNumber, "A")}>Serve A</button>
-                    <button style={styles.tinyBtn} onClick={() => setFirstServe(currentRound.roundNumber, m.courtNumber, "B")}>Serve B</button>
+                    <button style={{ ...styles.tinyBtn, fontSize: 12 }} onClick={() => setFirstServe(currentRound.roundNumber, m.courtNumber, "A")}>🪙 A won toss</button>
+                    <button style={{ ...styles.tinyBtn, fontSize: 12 }} onClick={() => setFirstServe(currentRound.roundNumber, m.courtNumber, "B")}>🪙 B won toss</button>
                     <button style={styles.tinyBtn} onClick={() => randomFirstServeForMatch(currentRound.roundNumber, m.courtNumber)}>Random</button>
                   </div>
 
-                  <div style={styles.hint}>Serve rotates every 4 points. Only completed matches count toward leaderboard.</div>
+                  <div style={styles.hint}>Serve rotates every {servesPerRotation} points. Only completed matches count toward leaderboard.</div>
                 </div>
               );
             })}
@@ -662,7 +670,7 @@ export default function AmericanoSessionPage() {
             <div style={styles.lbMeta}>{completedMatchCount} of {totalMatchCount} matches completed</div>
           </div>
           <div style={styles.lbHead}>
-            <div style={{ textAlign: "center" }}>Rank</div>
+            <div style={{ textAlign: "center" as const }}>Rank</div>
             <div>Player</div>
             <div style={styles.lbCellRight}>Played</div>
             <div style={styles.lbCellRight}>Points</div>

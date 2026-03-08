@@ -36,6 +36,8 @@ type AmericanoSession = {
   players: SessionPlayer[];
   currentRound: number;
   rounds: Round[];
+  pointsPerMatch?: number;
+  servesPerRotation?: number;
 };
 
 function safeParseJSON<T>(value: string | null, fallback: T): T {
@@ -107,6 +109,7 @@ export default function AmericanoPage() {
   const [savedPlayers, setSavedPlayers] = useState<string[]>([]);
   const [session, setSession] = useState<AmericanoSession | null>(null);
   const [courts, setCourts] = useState<number>(2);
+  const [servesPerRotation, setServesPerRotation] = useState<number>(4);
   const [pickedNames, setPickedNames] = useState<string[]>([]);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
@@ -157,6 +160,8 @@ export default function AmericanoPage() {
       players,
       currentRound: 1,
       rounds: [buildRound(players, courts, 1)],
+      pointsPerMatch: 21,
+      servesPerRotation,
     };
     localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(next));
     setSession(next);
@@ -171,128 +176,26 @@ export default function AmericanoPage() {
   }
 
   const styles: Record<string, React.CSSProperties> = {
-    page: {
-      minHeight: "100vh",
-      background: BLACK,
-      color: WHITE,
-      padding: 16,
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "flex-start",
-    },
-    card: {
-      width: "100%",
-      maxWidth: 680,
-      background: NAVY,
-      border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: 20,
-      padding: 18,
-      boxShadow: "0 12px 40px rgba(0,0,0,0.50)",
-      marginTop: 12,
-    },
-    titleRow: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      gap: 10,
-    },
+    page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
+    card: { width: "100%", maxWidth: 680, background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 18, boxShadow: "0 12px 40px rgba(0,0,0,0.50)", marginTop: 12 },
+    titleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
     title: { fontSize: 22, fontWeight: 1000 },
     subtitle: { color: WARM_WHITE, opacity: 0.6, fontSize: 13, marginTop: 5, lineHeight: 1.35 },
-    sectionLabel: {
-      fontSize: 11,
-      fontWeight: 1000,
-      letterSpacing: 1.4,
-      opacity: 0.45,
-      textTransform: "uppercase" as const,
-      marginTop: 18,
-      marginBottom: 8,
-    },
+    sectionLabel: { fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginTop: 18, marginBottom: 8 },
     row: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const },
-    input: {
-      flex: 1,
-      background: "rgba(255,255,255,0.07)",
-      color: WHITE,
-      border: "1px solid rgba(255,255,255,0.14)",
-      borderRadius: 12,
-      padding: "14px 12px",
-      fontSize: 16,
-      outline: "none",
-      fontWeight: 900,
-    },
-    btn: {
-      borderRadius: 14,
-      padding: "14px 14px",
-      fontSize: 15,
-      fontWeight: 950,
-      cursor: "pointer",
-      border: "1px solid rgba(255,255,255,0.14)",
-      background: "rgba(255,255,255,0.07)",
-      color: WHITE,
-      whiteSpace: "nowrap" as const,
-    },
-    btnPrimary: {
-      borderRadius: 14,
-      padding: "14px 18px",
-      fontSize: 15,
-      fontWeight: 1000,
-      cursor: "pointer",
-      border: "none",
-      background: ORANGE,
-      color: WHITE,
-      whiteSpace: "nowrap" as const,
-    },
-    btnDanger: {
-      borderRadius: 14,
-      padding: "14px 14px",
-      fontSize: 15,
-      fontWeight: 950,
-      cursor: "pointer",
-      border: "1px solid rgba(255,64,64,0.35)",
-      background: "rgba(255,64,64,0.10)",
-      color: WHITE,
-      whiteSpace: "nowrap" as const,
-    },
-    courtCounter: {
-      fontSize: 20,
-      fontWeight: 1000,
-      minWidth: 90,
-      textAlign: "center" as const,
-    },
-    counterMeta: {
-      fontSize: 13,
-      color: WARM_WHITE,
-      opacity: 0.55,
-      marginLeft: "auto",
-    },
-    grid: {
-      display: "grid",
-      gap: 10,
-      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    },
-    divider: {
-      height: 1,
-      background: "rgba(255,255,255,0.07)",
-      margin: "16px 0",
-    },
+    input: { flex: 1, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "14px 12px", fontSize: 16, outline: "none", fontWeight: 900 },
+    btn: { borderRadius: 14, padding: "14px 14px", fontSize: 15, fontWeight: 950, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
+    btnPrimary: { borderRadius: 14, padding: "14px 18px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" as const },
+    btnDanger: { borderRadius: 14, padding: "14px 14px", fontSize: 15, fontWeight: 950, cursor: "pointer", border: "1px solid rgba(255,64,64,0.35)", background: "rgba(255,64,64,0.10)", color: WHITE, whiteSpace: "nowrap" as const },
+    courtCounter: { fontSize: 20, fontWeight: 1000, minWidth: 90, textAlign: "center" as const },
+    counterMeta: { fontSize: 13, color: WARM_WHITE, opacity: 0.55, marginLeft: "auto" },
+    grid: { display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
+    divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "16px 0" },
     small: { fontSize: 12, color: WARM_WHITE, opacity: 0.55, marginTop: 6, lineHeight: 1.35 },
-    activeSessionCode: {
-      fontSize: 22,
-      fontWeight: 1000,
-      color: ORANGE,
-      letterSpacing: 2,
-    },
+    activeSessionCode: { fontSize: 22, fontWeight: 1000, color: ORANGE, letterSpacing: 2 },
     activeSessionMeta: { fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 },
-    error: {
-      marginTop: 12,
-      background: "rgba(255,64,64,0.10)",
-      border: "1px solid rgba(255,64,64,0.30)",
-      color: WHITE,
-      padding: 12,
-      borderRadius: 12,
-      fontWeight: 900,
-      fontSize: 13,
-    },
-  };
+    error: { marginTop: 12, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
+      };
 
   if (!loaded) {
     return (
@@ -314,43 +217,48 @@ export default function AmericanoPage() {
             <div style={styles.title}>Mixed Americano</div>
             <div style={styles.subtitle}>Rotating partners · Points-based scoring</div>
           </div>
-          <button style={styles.btn} onClick={() => router.push("/")}>
-            Home
-          </button>
+          <button style={styles.btn} onClick={() => router.push("/")}>Home</button>
         </div>
 
         <div style={styles.divider} />
 
         {session ? (
           <>
-            {/* Active session */}
             <div style={styles.sectionLabel}>Active session</div>
             <div style={styles.activeSessionCode}>{session.code}</div>
             <div style={styles.activeSessionMeta}>
               {session.players.length} players · {session.courts} court{session.courts > 1 ? "s" : ""}
             </div>
             <div style={styles.small}>Stored on this device.</div>
-
             <div style={{ ...styles.row, marginTop: 14 }}>
-              <button style={styles.btnPrimary} onClick={() => router.push("/americano/session")}>
-                Open session
-              </button>
-              <button style={styles.btnDanger} onClick={discardSession}>
-                Discard session
-              </button>
+              <button style={styles.btnPrimary} onClick={() => router.push("/americano/session")}>Open session</button>
+              <button style={styles.btnDanger} onClick={discardSession}>Discard session</button>
             </div>
           </>
         ) : (
           <>
-            {/* Courts selector */}
+            {/* Courts */}
             <div style={styles.sectionLabel}>Courts</div>
             <div style={styles.row}>
               <button style={styles.btn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
               <div style={styles.courtCounter}>{courts} {courts === 1 ? "court" : "courts"}</div>
               <button style={styles.btn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
-              <div style={styles.counterMeta}>
-                Min {minPlayers} players · {selectedCount} selected
-              </div>
+              <div style={styles.counterMeta}>Min {minPlayers} players · {selectedCount} selected</div>
+            </div>
+
+            <div style={styles.divider} />
+
+            {/* Serves per rotation */}
+            <div style={styles.sectionLabel}>Serves before rotation</div>
+            <div style={styles.row}>
+              {[2, 4].map((n) => (
+                <div key={n} style={(styles.serveChip as (a: boolean) => React.CSSProperties)(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>
+                  {n} points per serve
+                </div>
+              ))}
+            </div>
+            <div style={styles.small}>
+              How many consecutive points each player serves before the serve passes on. 4 is standard.
             </div>
 
             <div style={styles.divider} />
@@ -365,9 +273,7 @@ export default function AmericanoPage() {
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") addSavedPlayer(); }}
               />
-              <button style={styles.btnPrimary} onClick={addSavedPlayer}>
-                Add
-              </button>
+              <button style={styles.btnPrimary} onClick={addSavedPlayer}>Add</button>
             </div>
             <div style={styles.small}>Names saved locally and reused across sessions.</div>
 
@@ -382,9 +288,7 @@ export default function AmericanoPage() {
                   return (
                     <div key={name} style={playerChipStyle(active)} onClick={() => togglePick(name)}>
                       <div>{name}</div>
-                      {active && (
-                        <div style={{ fontSize: 12, color: ORANGE, fontWeight: 1000 }}>✓</div>
-                      )}
+                      {active && <div style={{ fontSize: 12, color: ORANGE, fontWeight: 1000 }}>✓</div>}
                     </div>
                   );
                 })}
@@ -393,9 +297,7 @@ export default function AmericanoPage() {
 
             {/* Actions */}
             <div style={{ ...styles.row, marginTop: 16 }}>
-              <button style={styles.btn} onClick={() => { setPickedNames([]); setError(""); }}>
-                Clear
-              </button>
+              <button style={styles.btn} onClick={() => { setPickedNames([]); setError(""); }}>Clear</button>
               <div style={{ flex: 1 }} />
               <button
                 style={{ ...styles.btnPrimary, opacity: selectedCount >= minPlayers ? 1 : 0.4 }}
