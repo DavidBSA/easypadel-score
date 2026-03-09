@@ -77,6 +77,10 @@ export default function OrganiserPage() {
   const [resolveLoading, setResolveLoading] = useState<string | null>(null);
   const [confirmLoading, setConfirmLoading] = useState<string | null>(null);
 
+  // Organiser direct score entry per match
+  const [courtScores, setCourtScores] = useState<Record<string, { pA: number; pB: number }>>({});
+  const [submitLoading, setSubmitLoading] = useState<string | null>(null);
+
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -98,6 +102,16 @@ export default function OrganiserPage() {
       const next = { ...prev };
       for (const m of data.matches) {
         if (m.scoreStatus === "CONFLICT" && !(m.id in next)) {
+          next[m.id] = { pA: m.pointsA ?? 0, pB: m.pointsB ?? 0 };
+        }
+      }
+      return next;
+    });
+    // Initialise court score entry state for in-progress matches
+    setCourtScores((prev) => {
+      const next = { ...prev };
+      for (const m of data.matches) {
+        if (m.status === "IN_PROGRESS" && !(m.id in next)) {
           next[m.id] = { pA: m.pointsA ?? 0, pB: m.pointsB ?? 0 };
         }
       }
@@ -204,6 +218,23 @@ export default function OrganiserPage() {
     } finally { setResolveLoading(null); }
   }
 
+  // Organiser submits score directly from court card
+  async function submitCourtScore(matchId: string) {
+    if (!deviceId) return;
+    const { pA, pB } = courtScores[matchId] ?? { pA: 0, pB: 0 };
+    setSubmitLoading(matchId);
+    try {
+      await fetch(`/api/matches/${matchId}/score`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, pointsA: pA, pointsB: pB, isOrganiserOverride: true }),
+      });
+    } finally { setSubmitLoading(null); }
+  }
+
+  function setCourtScore(matchId: string, patch: Partial<{ pA: number; pB: number }>) {
+    setCourtScores((prev) => ({ ...prev, [matchId]: { ...(prev[matchId] ?? { pA: 0, pB: 0 }), ...patch } }));
+  }
+
   function copyJoinLink() {
     const url = `${window.location.origin}/join?code=${code}`;
     navigator.clipboard.writeText(url).then(() => {
@@ -246,6 +277,14 @@ export default function OrganiserPage() {
     lbRight: { textAlign: "right" as const },
     lbCenter: { textAlign: "center" as const },
     hint: { fontSize: 12, opacity: 0.55, color: WARM_WHITE, lineHeight: 1.4 },
+    scoreEntryBox: { marginTop: 12, borderRadius: 12, padding: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" },
+    scoreEntryLabel: { fontSize: 11, fontWeight: 1000, opacity: 0.5, letterSpacing: 1, textTransform: "uppercase" as const, marginBottom: 10 },
+    scoreEntryRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+    scoreTeamBox: { display: "flex", flexDirection: "column" as const, gap: 8, alignItems: "center" },
+    scoreTeamLabel: { fontSize: 12, fontWeight: 1000, opacity: 0.7 },
+    scoreStepRow: { display: "flex", alignItems: "center", gap: 10 },
+    scoreVal: { fontSize: 26, fontWeight: 1150, minWidth: 36, textAlign: "center" as const },
+    submitBtn: { marginTop: 10, width: "100%", borderRadius: 12, padding: "12px 16px", fontSize: 14, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE },
   };
 
   if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
@@ -387,23 +426,11 @@ export default function OrganiserPage() {
       const pA = m.pointsA ?? 0; const pB = m.pointsB ?? 0;
       for (const pid of [m.teamAPlayer1, m.teamAPlayer2]) {
         const r = base.get(pid);
-        if (r) {
-          r.played++;
-          r.pointsFor += pA; r.pointsAgainst += pB;
-          if (pA > pB) r.wins++;
-          else if (pA === pB) r.draws++;
-          else r.losses++;
-        }
+        if (r) { r.played++; r.pointsFor += pA; r.pointsAgainst += pB; if (pA > pB) r.wins++; else if (pA === pB) r.draws++; else r.losses++; }
       }
       for (const pid of [m.teamBPlayer1, m.teamBPlayer2]) {
         const r = base.get(pid);
-        if (r) {
-          r.played++;
-          r.pointsFor += pB; r.pointsAgainst += pA;
-          if (pB > pA) r.wins++;
-          else if (pB === pA) r.draws++;
-          else r.losses++;
-        }
+        if (r) { r.played++; r.pointsFor += pB; r.pointsAgainst += pA; if (pB > pA) r.wins++; else if (pB === pA) r.draws++; else r.losses++; }
       }
     }
     return Array.from(base.values())
@@ -492,8 +519,12 @@ export default function OrganiserPage() {
             const { a1, a2, b1, b2 } = names(m);
             const pA = m.pointsA ?? 0; const pB = m.pointsB ?? 0;
             const isPending = m.scoreStatus === "PENDING";
-            const sColor = m.scoreStatus === "CONFLICT" ? RED : m.scoreStatus === "CONFIRMED" ? GREEN : isPending ? ORANGE : WARM_WHITE;
-            const sLabel = m.scoreStatus === "CONFLICT" ? "⚠ Conflict" : m.scoreStatus === "CONFIRMED" ? "✓ Confirmed" : isPending ? "⏳ Awaiting confirmation" : "In play";
+            const isConfirmed = m.scoreStatus === "CONFIRMED";
+            const sColor = m.scoreStatus === "CONFLICT" ? RED : isConfirmed ? GREEN : isPending ? ORANGE : WARM_WHITE;
+            const sLabel = m.scoreStatus === "CONFLICT" ? "⚠ Conflict" : isConfirmed ? "✓ Confirmed" : isPending ? "⏳ Awaiting confirmation" : "In play";
+            const cs = courtScores[m.id] ?? { pA: 0, pB: 0 };
+            const canEnterScore = !isPending && !isConfirmed && m.scoreStatus !== "CONFLICT";
+
             return (
               <div key={cn} style={{ ...st.courtCard, borderColor: isPending ? "rgba(255,107,0,0.35)" : "rgba(255,107,0,0.2)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -507,6 +538,39 @@ export default function OrganiserPage() {
                   <span style={st.score}>{pB}</span>
                 </div>
                 <div style={st.names}>{b1} & {b2}</div>
+
+                {/* Organiser score entry — shown when match is in play and no score submitted yet */}
+                {canEnterScore && (
+                  <div style={st.scoreEntryBox}>
+                    <div style={st.scoreEntryLabel}>Enter score</div>
+                    <div style={st.scoreEntryRow}>
+                      <div style={st.scoreTeamBox}>
+                        <div style={st.scoreTeamLabel}>{a1} & {a2}</div>
+                        <div style={st.scoreStepRow}>
+                          <button style={st.stepBtn} onClick={() => setCourtScore(m.id, { pA: Math.max(0, cs.pA - 1) })}>−</button>
+                          <span style={st.scoreVal}>{cs.pA}</span>
+                          <button style={st.stepBtn} onClick={() => setCourtScore(m.id, { pA: cs.pA + 1 })}>+</button>
+                        </div>
+                      </div>
+                      <div style={st.scoreTeamBox}>
+                        <div style={st.scoreTeamLabel}>{b1} & {b2}</div>
+                        <div style={st.scoreStepRow}>
+                          <button style={st.stepBtn} onClick={() => setCourtScore(m.id, { pB: Math.max(0, cs.pB - 1) })}>−</button>
+                          <span style={st.scoreVal}>{cs.pB}</span>
+                          <button style={st.stepBtn} onClick={() => setCourtScore(m.id, { pB: cs.pB + 1 })}>+</button>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      style={{ ...st.submitBtn, opacity: submitLoading === m.id ? 0.5 : 1 }}
+                      onClick={() => submitCourtScore(m.id)}
+                      disabled={submitLoading === m.id}
+                    >
+                      {submitLoading === m.id ? "Submitting…" : `Submit ${cs.pA} – ${cs.pB}`}
+                    </button>
+                  </div>
+                )}
+
                 {isPending && (
                   <button
                     style={{ ...st.btnConfirm, opacity: confirmLoading === m.id ? 0.5 : 1 }}
