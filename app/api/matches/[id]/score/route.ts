@@ -38,7 +38,7 @@ export async function POST(
           where: { id },
           data: { pointsA, pointsB, scoreStatus: "CONFIRMED", status: "COMPLETE", completedAt: new Date() },
         }),
-        prisma.session.update({ where: { id: match.sessionId }, data: {} }),
+        prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
@@ -61,7 +61,7 @@ export async function POST(
           where: { id },
           data: { pointsA, pointsB, scoreStatus: "PENDING" },
         }),
-        prisma.session.update({ where: { id: match.sessionId }, data: {} }),
+        prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
       return NextResponse.json({ match: updated, result: "PENDING" });
     }
@@ -76,7 +76,7 @@ export async function POST(
           where: { id },
           data: { pointsA: s1.pointsA, pointsB: s1.pointsB, scoreStatus: "CONFIRMED", status: "COMPLETE", completedAt: new Date() },
         }),
-        prisma.session.update({ where: { id: match.sessionId }, data: {} }),
+        prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     } else {
@@ -85,7 +85,7 @@ export async function POST(
           where: { id },
           data: { scoreStatus: "CONFLICT" },
         }),
-        prisma.session.update({ where: { id: match.sessionId }, data: {} }),
+        prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
       return NextResponse.json({
         match: updated,

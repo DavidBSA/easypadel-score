@@ -41,11 +41,8 @@ export async function PATCH(
         where: { id },
         data: { status: "IN_PROGRESS", courtNumber, startedAt: new Date() },
       }),
-      prisma.session.update({
-        where: { id: match.sessionId },
-        data: {},
-      }),
-    ]);
+      prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
+      ]);
 
     return NextResponse.json(updated);
   } catch (err) {

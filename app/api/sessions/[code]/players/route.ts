@@ -51,7 +51,7 @@ export async function POST(
 
     const [player] = await prisma.$transaction([
       prisma.player.create({ data: { sessionId: session.id, name } }),
-      prisma.session.update({ where: { id: session.id }, data: {} }),
+      prisma.session.update({ where: { id: session.id }, data: { updatedAt: new Date() } }),
     ]);
 
     return NextResponse.json({ playerId: player.id, name: player.name });
