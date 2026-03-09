@@ -9,7 +9,7 @@ export async function POST(
     const { code } = await params;
     const session = await prisma.session.findUnique({
       where: { code: code.toUpperCase() },
-      include: { players: true, devices: true },
+      include: { players: true },
     });
 
     if (!session) {
@@ -21,10 +21,9 @@ export async function POST(
     }
 
     const body = await req.json();
-    const { deviceId, playerName } = body;
+    const { organiserPin, playerName } = body;
 
-    const device = session.devices.find((d) => d.id === deviceId && d.isOrganiser);
-    if (!device) {
+    if (!organiserPin || organiserPin !== session.organiserPin) {
       return NextResponse.json({ error: "Organiser access required." }, { status: 403 });
     }
 
