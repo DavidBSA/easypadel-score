@@ -4,6 +4,7 @@ import { prisma } from "../../../../../lib/prisma";
 export const dynamic = "force-dynamic";
 
 const POLL_INTERVAL = 2000;
+const KEEPALIVE_INTERVAL = 15000;
 
 export async function GET(
   req: NextRequest,
@@ -19,7 +20,6 @@ export async function GET(
   }
 
   const sessionId = session.id;
-
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -27,7 +27,16 @@ export async function GET(
       let lastUpdatedAt = new Date(0);
       let active = true;
 
+      function enqueue(chunk: string) {
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          active = false;
+        }
+      }
+
       async function sendState() {
+        if (!active) return;
         try {
           const data = await prisma.session.findUnique({
             where: { id: sessionId },
@@ -41,29 +50,35 @@ export async function GET(
           });
 
           if (!data) return;
-
           if (data.updatedAt <= lastUpdatedAt) return;
           lastUpdatedAt = data.updatedAt;
 
-          const payload = `data: ${JSON.stringify(data)}\n\n`;
-          controller.enqueue(encoder.encode(payload));
+          enqueue(`data: ${JSON.stringify(data)}\n\n`);
         } catch {
           active = false;
-          controller.close();
+          try { controller.close(); } catch { /* already closed */ }
         }
       }
 
       await sendState();
 
-      const interval = setInterval(async () => {
-        if (!active) { clearInterval(interval); return; }
+      // Poll for DB changes every 2s
+      const pollInterval = setInterval(async () => {
+        if (!active) { clearInterval(pollInterval); return; }
         await sendState();
       }, POLL_INTERVAL);
 
+      // Keepalive comment frame every 15s — prevents Railway/proxies killing the connection
+      const keepaliveInterval = setInterval(() => {
+        if (!active) { clearInterval(keepaliveInterval); return; }
+        enqueue(": keepalive\n\n");
+      }, KEEPALIVE_INTERVAL);
+
       req.signal.addEventListener("abort", () => {
         active = false;
-        clearInterval(interval);
-        controller.close();
+        clearInterval(pollInterval);
+        clearInterval(keepaliveInterval);
+        try { controller.close(); } catch { /* already closed */ }
       });
     },
   });
@@ -72,7 +87,8 @@ export async function GET(
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 }
