@@ -49,9 +49,10 @@ export async function POST(
       );
     }
 
-    const player = await prisma.player.create({
-      data: { sessionId: session.id, name },
-    });
+    const [player] = await prisma.$transaction([
+      prisma.player.create({ data: { sessionId: session.id, name } }),
+      prisma.session.update({ where: { id: session.id }, data: {} }),
+    ]);
 
     return NextResponse.json({ playerId: player.id, name: player.name });
   } catch (err) {

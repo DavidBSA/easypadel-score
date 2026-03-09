@@ -36,14 +36,16 @@ export async function PATCH(
       );
     }
 
-    const updated = await prisma.match.update({
-      where: { id },
-      data: {
-        status: "IN_PROGRESS",
-        courtNumber,
-        startedAt: new Date(),
-      },
-    });
+    const [updated] = await prisma.$transaction([
+      prisma.match.update({
+        where: { id },
+        data: { status: "IN_PROGRESS", courtNumber, startedAt: new Date() },
+      }),
+      prisma.session.update({
+        where: { id: match.sessionId },
+        data: {},
+      }),
+    ]);
 
     return NextResponse.json(updated);
   } catch (err) {
