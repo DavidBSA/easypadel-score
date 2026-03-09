@@ -43,6 +43,7 @@ export async function POST(
     );
 
     await prisma.$transaction(async (tx) => {
+      // Create the full match queue
       await tx.match.createMany({
         data: queueMatches.map((m) => ({
           sessionId: session.id,
@@ -53,11 +54,39 @@ export async function POST(
           teamBPlayer2: m.teamBPlayer2,
         })),
       });
+
+      // Activate session
       await tx.session.update({
         where: { id: session.id },
         data: { status: "ACTIVE" },
       });
     });
+
+    // Auto-assign first N matches to courts 1..N
+    // Fetch created matches in queue order
+    const createdMatches = await prisma.match.findMany({
+      where: { sessionId: session.id },
+      orderBy: { queuePosition: "asc" },
+    });
+
+    const autoAssign = createdMatches.slice(0, session.courts);
+
+    await prisma.$transaction([
+      ...autoAssign.map((m, idx) =>
+        prisma.match.update({
+          where: { id: m.id },
+          data: {
+            status: "IN_PROGRESS",
+            courtNumber: idx + 1,
+            startedAt: new Date(),
+          },
+        })
+      ),
+      prisma.session.update({
+        where: { id: session.id },
+        data: { updatedAt: new Date() },
+      }),
+    ]);
 
     return NextResponse.json({ success: true });
   } catch (err) {

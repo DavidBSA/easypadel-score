@@ -1,6 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../../../lib/prisma";
 
+// After a match completes on a given court, find the next PENDING match
+// where all 4 players are free (not currently IN_PROGRESS on another court).
+// Assigns it to the freed court. Skips matches with busy players.
+async function autoAssignNextMatch(sessionId: string, freedCourt: number) {
+  // Get all players currently IN_PROGRESS on other courts
+  const activeMatches = await prisma.match.findMany({
+    where: { sessionId, status: "IN_PROGRESS" },
+  });
+
+  const busyPlayerIds = new Set<string>();
+  for (const m of activeMatches) {
+    busyPlayerIds.add(m.teamAPlayer1);
+    busyPlayerIds.add(m.teamAPlayer2);
+    busyPlayerIds.add(m.teamBPlayer1);
+    busyPlayerIds.add(m.teamBPlayer2);
+  }
+
+  // Find all pending matches in queue order
+  const pendingMatches = await prisma.match.findMany({
+    where: { sessionId, status: "PENDING" },
+    orderBy: { queuePosition: "asc" },
+  });
+
+  // Find first match where all 4 players are free
+  const eligible = pendingMatches.find(
+    (m) =>
+      !busyPlayerIds.has(m.teamAPlayer1) &&
+      !busyPlayerIds.has(m.teamAPlayer2) &&
+      !busyPlayerIds.has(m.teamBPlayer1) &&
+      !busyPlayerIds.has(m.teamBPlayer2)
+  );
+
+  if (!eligible) return; // No eligible match — court stays open
+
+  await prisma.$transaction([
+    prisma.match.update({
+      where: { id: eligible.id },
+      data: {
+        status: "IN_PROGRESS",
+        courtNumber: freedCourt,
+        startedAt: new Date(),
+      },
+    }),
+    prisma.session.update({
+      where: { id: sessionId },
+      data: { updatedAt: new Date() },
+    }),
+  ]);
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -26,7 +76,7 @@ export async function POST(
       return NextResponse.json({ error: "Match not found" }, { status: 404 });
     }
 
-    // ── Organiser confirm (lock PENDING score as-is, no value change) ─────────
+    // ── Organiser confirm (lock PENDING score as-is) ──────────────────────────
     if (isOrganiserConfirm) {
       const device = await prisma.device.findUnique({ where: { id: deviceId } });
       if (!device?.isOrganiser) {
@@ -39,10 +89,13 @@ export async function POST(
         }),
         prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
+      if (match.courtNumber) {
+        await autoAssignNextMatch(match.sessionId, match.courtNumber);
+      }
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
-    // ── Organiser override (conflict resolution — sets new score values) ──────
+    // ── Organiser override (conflict resolution / direct score entry) ─────────
     if (isOrganiserOverride) {
       const device = await prisma.device.findUnique({ where: { id: deviceId } });
       if (!device?.isOrganiser) {
@@ -55,6 +108,9 @@ export async function POST(
         }),
         prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
+      if (match.courtNumber) {
+        await autoAssignNextMatch(match.sessionId, match.courtNumber);
+      }
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
@@ -87,10 +143,19 @@ export async function POST(
       const [updated] = await prisma.$transaction([
         prisma.match.update({
           where: { id },
-          data: { pointsA: s1.pointsA, pointsB: s1.pointsB, scoreStatus: "CONFIRMED", status: "COMPLETE", completedAt: new Date() },
+          data: {
+            pointsA: s1.pointsA,
+            pointsB: s1.pointsB,
+            scoreStatus: "CONFIRMED",
+            status: "COMPLETE",
+            completedAt: new Date(),
+          },
         }),
         prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
+      if (match.courtNumber) {
+        await autoAssignNextMatch(match.sessionId, match.courtNumber);
+      }
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     } else {
       const [updated] = await prisma.$transaction([
