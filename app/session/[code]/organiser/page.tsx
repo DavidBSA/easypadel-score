@@ -64,6 +64,7 @@ export default function OrganiserPage() {
 
   const [resolving, setResolving] = useState<Record<string, { pA: number; pB: number }>>({});
   const [resolveLoading, setResolveLoading] = useState<string | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState<string | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -169,6 +170,18 @@ export default function OrganiserPage() {
     });
   }
 
+  // One-tap confirm: locks the already-submitted PENDING score as final
+  async function confirmScore(matchId: string) {
+    if (!deviceId) return;
+    setConfirmLoading(matchId);
+    try {
+      await fetch(`/api/matches/${matchId}/score`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, isOrganiserConfirm: true }),
+      });
+    } finally { setConfirmLoading(null); }
+  }
+
   async function resolveConflict(matchId: string) {
     if (!deviceId) return;
     const { pA, pB } = resolving[matchId] ?? { pA: 0, pB: 0 };
@@ -176,7 +189,7 @@ export default function OrganiserPage() {
     try {
       await fetch(`/api/matches/${matchId}/score`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, pointsA: pA, pointsB: pB }),
+        body: JSON.stringify({ deviceId, pointsA: pA, pointsB: pB, isOrganiserOverride: true }),
       });
     } finally { setResolveLoading(null); }
   }
@@ -199,6 +212,7 @@ export default function OrganiserPage() {
     btn: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
     btnOrange: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" as const },
     btnGreen: { borderRadius: 14, padding: "14px 20px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: GREEN, color: WHITE, whiteSpace: "nowrap" as const },
+    btnConfirm: { borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: GREEN, color: WHITE, whiteSpace: "nowrap" as const, marginTop: 10, width: "100%" },
     courtCard: { borderRadius: 16, padding: 14, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 10 },
     conflictCard: { borderRadius: 16, padding: 14, background: "rgba(255,64,64,0.07)", border: "1px solid rgba(255,64,64,0.3)", marginBottom: 10 },
     queueCard: { borderRadius: 16, padding: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", marginBottom: 10 },
@@ -318,14 +332,9 @@ export default function OrganiserPage() {
 
           <div style={st.sectionLabel}>Add player manually</div>
           <div style={st.addRow}>
-            <input
-              style={st.addInput}
-              value={addName}
-              placeholder="Player name"
-              maxLength={30}
+            <input style={st.addInput} value={addName} placeholder="Player name" maxLength={30}
               onChange={(e) => setAddName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") addPlayerManually(); }}
-            />
+              onKeyDown={(e) => { if (e.key === "Enter") addPlayerManually(); }} />
             <button style={{ ...st.btnOrange, opacity: addLoading ? 0.5 : 1 }} onClick={addPlayerManually} disabled={addLoading}>
               {addLoading ? "Adding…" : "Add"}
             </button>
@@ -339,11 +348,8 @@ export default function OrganiserPage() {
               </div>
               <div style={st.hint}>Locking entries generates the full match queue.</div>
             </div>
-            <button
-              style={{ ...st.btnGreen, opacity: canStart && !startLoading ? 1 : 0.4 }}
-              onClick={lockAndStart}
-              disabled={!canStart || startLoading}
-            >
+            <button style={{ ...st.btnGreen, opacity: canStart && !startLoading ? 1 : 0.4 }}
+              onClick={lockAndStart} disabled={!canStart || startLoading}>
               {startLoading ? "Starting…" : "Lock & Start →"}
             </button>
           </div>
@@ -393,6 +399,7 @@ export default function OrganiserPage() {
         {shareCard}
         <div style={st.divider} />
 
+        {/* Conflicts */}
         {conflicts.length > 0 && (
           <>
             <div style={st.sectionLabel}>⚠ Conflicts — enter correct score</div>
@@ -428,6 +435,7 @@ export default function OrganiserPage() {
           </>
         )}
 
+        {/* Courts */}
         <div style={st.sectionLabel}>Courts</div>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: session.courts >= 2 ? "repeat(2, minmax(0,1fr))" : "1fr" }}>
           {courts.map((cn) => {
@@ -440,10 +448,11 @@ export default function OrganiserPage() {
             );
             const { a1, a2, b1, b2 } = names(m);
             const pA = m.pointsA ?? 0; const pB = m.pointsB ?? 0;
-            const sColor = m.scoreStatus === "CONFLICT" ? RED : m.scoreStatus === "CONFIRMED" ? GREEN : m.scoreStatus === "PENDING" ? WARM_WHITE : ORANGE;
-            const sLabel = m.scoreStatus === "CONFLICT" ? "⚠ Conflict" : m.scoreStatus === "CONFIRMED" ? "✓ Confirmed" : m.scoreStatus === "PENDING" ? "Score submitted" : "In play";
+            const isPending = m.scoreStatus === "PENDING";
+            const sColor = m.scoreStatus === "CONFLICT" ? RED : m.scoreStatus === "CONFIRMED" ? GREEN : isPending ? ORANGE : WARM_WHITE;
+            const sLabel = m.scoreStatus === "CONFLICT" ? "⚠ Conflict" : m.scoreStatus === "CONFIRMED" ? "✓ Confirmed" : isPending ? "⏳ Awaiting confirmation" : "In play";
             return (
-              <div key={cn} style={{ ...st.courtCard, borderColor: "rgba(255,107,0,0.2)" }}>
+              <div key={cn} style={{ ...st.courtCard, borderColor: isPending ? "rgba(255,107,0,0.35)" : "rgba(255,107,0,0.2)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <div style={{ fontWeight: 1000, fontSize: 15, color: ORANGE }}>Court {cn}</div>
                   <span style={{ fontSize: 11, fontWeight: 1000, color: sColor }}>{sLabel}</span>
@@ -455,11 +464,21 @@ export default function OrganiserPage() {
                   <span style={st.score}>{pB}</span>
                 </div>
                 <div style={st.names}>{b1} & {b2}</div>
+                {isPending && (
+                  <button
+                    style={{ ...st.btnConfirm, opacity: confirmLoading === m.id ? 0.5 : 1 }}
+                    onClick={() => confirmScore(m.id)}
+                    disabled={confirmLoading === m.id}
+                  >
+                    {confirmLoading === m.id ? "Confirming…" : `✓ Confirm ${pA}–${pB}`}
+                  </button>
+                )}
               </div>
             );
           })}
         </div>
 
+        {/* Queue */}
         {pending.length > 0 && (
           <>
             <div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>
@@ -486,13 +505,14 @@ export default function OrganiserPage() {
         )}
 
         {pending.length === 0 && inProgress.length === 0 && complete.length > 0 && (
-          <div style={{ opacity: 0.55, fontWeight: 900, padding: "16px 0", textAlign: "center" }}>
+          <div style={{ opacity: 0.55, fontWeight: 900, padding: "16px 0", textAlign: "center" as const }}>
             All {complete.length} matches complete 🏆
           </div>
         )}
 
         <div style={st.divider} />
 
+        {/* Leaderboard */}
         <div style={st.sectionLabel}>Leaderboard</div>
         <div style={st.lbWrap}>
           <div style={st.lbHead}>
@@ -514,9 +534,7 @@ export default function OrganiserPage() {
               </div>
             );
           })}
-          {complete.length === 0 && (
-            <div style={st.hint}>No completed matches yet.</div>
-          )}
+          {complete.length === 0 && <div style={st.hint}>No completed matches yet.</div>}
         </div>
       </div>
     </div>
