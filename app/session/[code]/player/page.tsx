@@ -33,7 +33,7 @@ function chipStyle(active: boolean): React.CSSProperties {
     borderRadius: 14, padding: "12px 14px",
     background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.04)",
     border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.10)",
-    cursor: "pointer", fontWeight: 900, fontSize: 14,
+    cursor: "pointer", fontWeight: 900, fontSize: 14, color: WHITE,
   };
 }
 
@@ -55,6 +55,8 @@ export default function PlayerPage() {
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState("");
 
   const [scoreA, setScoreA] = useState(0);
   const [scoreB, setScoreB] = useState(0);
@@ -65,6 +67,7 @@ export default function PlayerPage() {
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Bootstrap: read localStorage, skip picker if already registered ──────────
   useEffect(() => {
     if (!code) return;
     try {
@@ -78,6 +81,7 @@ export default function PlayerPage() {
     setBootstrapped(true);
   }, [code]);
 
+  // ── SSE / polling ────────────────────────────────────────────────────────────
   const applySession = useCallback((data: Session) => setSession(data), []);
 
   useEffect(() => {
@@ -101,21 +105,38 @@ export default function PlayerPage() {
     };
   }, [code, applySession]);
 
-  function pickPlayer(p: Player) {
-    setSelectedPlayer(p);
-    localStorage.setItem(`eps_player_${code}`, JSON.stringify(p));
-    if (!deviceId) {
-      fetch(`/api/sessions/${code}/devices`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
-      }).then((r) => r.json()).then((data) => {
-        if (data.deviceId) {
-          setDeviceId(data.deviceId);
-          localStorage.setItem(`eps_join_${code}`, JSON.stringify({ deviceId: data.deviceId, isOrganiser: false }));
-        }
-      }).catch(() => { });
-    }
+  // ── Claim a manually-added player from the list ───────────────────────────────
+  async function claimPlayer(p: Player) {
+    setClaiming(true); setClaimError("");
+    try {
+      // Register this device against the session; server returns a deviceId
+      const r = await fetch(`/api/sessions/${code}/devices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playerId: p.id }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setClaimError(data.error ?? "Could not register device."); setClaiming(false); return; }
+      const did = data.deviceId;
+      setDeviceId(did);
+      localStorage.setItem(`eps_join_${code}`, JSON.stringify({ deviceId: did, isOrganiser: false }));
+      localStorage.setItem(`eps_player_${code}`, JSON.stringify(p));
+      setSelectedPlayer(p);
+    } catch { setClaimError("Network error. Please try again."); }
+    setClaiming(false);
   }
 
+  // ── Change name: clear local state and return to picker ──────────────────────
+  function changeName() {
+    localStorage.removeItem(`eps_player_${code}`);
+    localStorage.removeItem(`eps_join_${code}`);
+    setSelectedPlayer(null);
+    setDeviceId(null);
+    setSubmitResult(null);
+    setClaimError("");
+  }
+
+  // ── Score submission ─────────────────────────────────────────────────────────
   async function submitScore() {
     if (!deviceId || !myMatch) return;
     setSubmitting(true); setSubmitError(""); setSubmitResult(null);
@@ -132,7 +153,7 @@ export default function PlayerPage() {
     setSubmitting(false);
   }
 
-  // ── Derived ───────────────────────────────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────────────────────
   const myMatch = (selectedPlayer && session)
     ? session.matches.find((m) =>
         (m.status === "IN_PROGRESS" || m.status === "COMPLETE") &&
@@ -148,7 +169,7 @@ export default function PlayerPage() {
 
   const nameById = (session?.players ?? []).reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
 
-  // ── Styles ─────────────────────────────────────────────────────────────────────
+  // ── Styles ───────────────────────────────────────────────────────────────────
   const st: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
     card: { width: "100%", maxWidth: 480, background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 18, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", marginTop: 12 },
@@ -158,7 +179,6 @@ export default function PlayerPage() {
     divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "14px 0" },
     sectionLabel: { fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginTop: 16, marginBottom: 10 },
     btn: { borderRadius: 14, padding: "10px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE },
-    btnOrange: { borderRadius: 14, padding: "14px 16px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE },
     grid2: { display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0,1fr))" },
     bigNum: { fontSize: 56, fontWeight: 1200, letterSpacing: 0, lineHeight: 1 },
     stepBtn: { width: 52, height: 52, borderRadius: 14, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, fontSize: 26, fontWeight: 1000, cursor: "pointer" },
@@ -168,28 +188,43 @@ export default function PlayerPage() {
     successBox: { marginTop: 10, background: "rgba(0,200,80,0.10)", border: "1px solid rgba(0,200,80,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
   };
 
-  if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
+  if (!bootstrapped) {
+    return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
+  }
 
-  // ── Name picker ───────────────────────────────────────────────────────────────
+  // ── Name picker (manually-added players only) ─────────────────────────────────
   if (!selectedPlayer) {
     return (
       <div style={st.page}>
         <div style={st.card}>
-          <button style={{ ...st.btn, marginBottom: 14 }} onClick={() => router.push("/")}>← Back</button>
+          <button style={{ ...st.btn, marginBottom: 14 }} onClick={() => router.push("/")}>← Home</button>
           <div style={st.title}>Who are you?</div>
-          <div style={{ ...st.sub, marginBottom: 4 }}>Select your name to see your match status.</div>
+          <div style={{ ...st.sub, marginBottom: 4 }}>
+            Tap your name to claim your spot. If you haven't joined yet,{" "}
+            <span
+              style={{ color: ORANGE, cursor: "pointer", fontWeight: 1000 }}
+              onClick={() => router.push(`/join?code=${code}`)}
+            >
+              join with the session code
+            </span>.
+          </div>
           {!session ? (
             <div style={{ opacity: 0.6, marginTop: 14, fontWeight: 900 }}>Loading player list…</div>
           ) : (
             <>
-              <div style={st.sectionLabel}>Session {code} — {session.players.length} players</div>
+              <div style={st.sectionLabel}>Session {code} — tap your name</div>
               <div style={st.grid2}>
                 {session.players.map((p) => (
-                  <div key={p.id} style={chipStyle(false)} onClick={() => pickPlayer(p)}>
+                  <div
+                    key={p.id}
+                    style={{ ...chipStyle(false), opacity: claiming ? 0.5 : 1 }}
+                    onClick={() => { if (!claiming) claimPlayer(p); }}
+                  >
                     {p.name}
                   </div>
                 ))}
               </div>
+              {claimError && <div style={st.errorBox}>{claimError}</div>}
             </>
           )}
         </div>
@@ -197,7 +232,7 @@ export default function PlayerPage() {
     );
   }
 
-  // ── Main player view ──────────────────────────────────────────────────────────
+  // ── Main player view ─────────────────────────────────────────────────────────
   let statusBlock: React.ReactNode;
 
   if (!myMatch) {
@@ -320,9 +355,7 @@ export default function PlayerPage() {
             <div style={st.title}>Hi, {selectedPlayer.name}</div>
             <div style={st.sub}>Session {code}</div>
           </div>
-          <button style={st.btn} onClick={() => { localStorage.removeItem(`eps_player_${code}`); setSelectedPlayer(null); }}>
-            Change name
-          </button>
+          <button style={st.btn} onClick={changeName}>Change name</button>
         </div>
         <div style={st.divider} />
         {statusBlock}
