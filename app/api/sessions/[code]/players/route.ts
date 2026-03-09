@@ -21,9 +21,14 @@ export async function POST(
     }
 
     const body = await req.json();
-    const { organiserPin, playerName } = body;
+    const { deviceId, playerName } = body;
 
-    if (!organiserPin || organiserPin !== session.organiserPin) {
+    if (!deviceId) {
+      return NextResponse.json({ error: "deviceId required." }, { status: 400 });
+    }
+
+    const device = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!device?.isOrganiser) {
       return NextResponse.json({ error: "Organiser access required." }, { status: 403 });
     }
 
