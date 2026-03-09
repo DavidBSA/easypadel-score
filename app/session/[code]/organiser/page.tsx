@@ -63,7 +63,8 @@ export default function OrganiserPage() {
 
   const [session, setSession] = useState<Session | null>(null);
   const [sessionError, setSessionError] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "shared">("idle");
+  const [shareQRStatus, setShareQRStatus] = useState<"idle" | "loading" | "shared" | "copied">("idle");
   const [showQR, setShowQR] = useState(false);
 
   const [addName, setAddName] = useState("");
@@ -77,7 +78,6 @@ export default function OrganiserPage() {
   const [resolveLoading, setResolveLoading] = useState<string | null>(null);
   const [confirmLoading, setConfirmLoading] = useState<string | null>(null);
 
-  // Organiser direct score entry per match
   const [courtScores, setCourtScores] = useState<Record<string, { pA: number; pB: number }>>({});
   const [submitLoading, setSubmitLoading] = useState<string | null>(null);
 
@@ -107,7 +107,6 @@ export default function OrganiserPage() {
       }
       return next;
     });
-    // Initialise court score entry state for in-progress matches
     setCourtScores((prev) => {
       const next = { ...prev };
       for (const m of data.matches) {
@@ -218,7 +217,6 @@ export default function OrganiserPage() {
     } finally { setResolveLoading(null); }
   }
 
-  // Organiser submits score directly from court card
   async function submitCourtScore(matchId: string) {
     if (!deviceId) return;
     const { pA, pB } = courtScores[matchId] ?? { pA: 0, pB: 0 };
@@ -235,11 +233,81 @@ export default function OrganiserPage() {
     setCourtScores((prev) => ({ ...prev, [matchId]: { ...(prev[matchId] ?? { pA: 0, pB: 0 }), ...patch } }));
   }
 
-  function copyJoinLink() {
-    const url = `${window.location.origin}/join?code=${code}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true); setTimeout(() => setCopied(false), 2000);
-    });
+  // ── Share helpers ──────────────────────────────────────────────────────────
+  function getJoinUrl() {
+    return typeof window !== "undefined" ? `${window.location.origin}/join?code=${code}` : `/join?code=${code}`;
+  }
+
+  async function shareLink() {
+    const url = getJoinUrl();
+    const shareData = {
+      title: "Join my padel session",
+      text: `Join my EasyPadelScore session — code: ${code}`,
+      url,
+    };
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share(shareData);
+        setShareStatus("shared");
+        setTimeout(() => setShareStatus("idle"), 2500);
+        return;
+      } catch (err: unknown) {
+        // User cancelled or share failed — fall through to clipboard
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    }
+    // Fallback: clipboard
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareStatus("copied");
+      setTimeout(() => setShareStatus("idle"), 2500);
+    } catch { /* ignore */ }
+  }
+
+  async function shareQR() {
+    const url = getJoinUrl();
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(url)}&bgcolor=0D1B2A&color=FFFFFF&margin=16`;
+
+    if (typeof navigator !== "undefined" && navigator.share) {
+      // Try to share as image file (supported on iOS 15+ / Android Chrome)
+      try {
+        setShareQRStatus("loading");
+        const resp = await fetch(qrUrl);
+        const blob = await resp.blob();
+        const file = new File([blob], `EasyPadelScore-${code}.png`, { type: "image/png" });
+
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: "Join my padel session",
+            text: `Scan to join session ${code}`,
+            files: [file],
+          });
+          setShareQRStatus("shared");
+          setTimeout(() => setShareQRStatus("idle"), 2500);
+          return;
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") { setShareQRStatus("idle"); return; }
+        // File share not supported — fall through to link share
+      }
+
+      // Fallback: share the QR URL as a link
+      try {
+        await navigator.share({ title: "Join my padel session", text: `Scan to join session ${code}`, url: qrUrl });
+        setShareQRStatus("shared");
+        setTimeout(() => setShareQRStatus("idle"), 2500);
+        return;
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") { setShareQRStatus("idle"); return; }
+      }
+    }
+
+    // Last resort: copy join link to clipboard
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareQRStatus("copied");
+      setTimeout(() => setShareQRStatus("idle"), 2500);
+    } catch { setShareQRStatus("idle"); }
   }
 
   const st: Record<string, React.CSSProperties> = {
@@ -264,8 +332,15 @@ export default function OrganiserPage() {
     pinInput: { width: "100%", background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "14px 12px", fontSize: 20, fontWeight: 900, textAlign: "center" as const, outline: "none", boxSizing: "border-box" as const },
     errorBox: { marginTop: 10, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
     pillsRow: { display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 12 },
-    shareCard: { marginTop: 12, borderRadius: 16, padding: 14, background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" as const },
+    // Share card
+    shareCard: { marginTop: 12, borderRadius: 16, padding: 14, background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)" },
+    shareTop: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" as const },
     codeBlock: { fontSize: 28, fontWeight: 1150, color: ORANGE, letterSpacing: 4, lineHeight: 1 },
+    shareButtons: { display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center" },
+    // Share button — orange accent when supported
+    btnShare: { borderRadius: 14, padding: "11px 16px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" as const, display: "flex", alignItems: "center", gap: 6 },
+    btnShareSecondary: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.20)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const, display: "flex", alignItems: "center", gap: 6 },
+    qrWrap: { marginTop: 12, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 },
     addRow: { display: "flex", gap: 10, alignItems: "center" },
     addInput: { flex: 1, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "12px 14px", fontSize: 15, fontWeight: 900, outline: "none" },
     playerPill: { borderRadius: 12, padding: "8px 14px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", fontSize: 14, fontWeight: 900, color: WHITE },
@@ -317,27 +392,69 @@ export default function OrganiserPage() {
 
   const minPlayers = session.courts * 4;
   const canStart = session.players.length >= minPlayers;
-  const joinUrl = typeof window !== "undefined" ? `${window.location.origin}/join?code=${code}` : `/join?code=${code}`;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(joinUrl)}&bgcolor=0D1B2A&color=FFFFFF&margin=8`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getJoinUrl())}&bgcolor=0D1B2A&color=FFFFFF&margin=10`;
+
+  // Determine share button labels
+  const shareLinkLabel = shareStatus === "shared" ? "✓ Shared!" : shareStatus === "copied" ? "✓ Copied!" : "⬆ Share link";
+  const shareQRLabel = shareQRStatus === "loading" ? "Loading…" : shareQRStatus === "shared" ? "✓ Shared!" : shareQRStatus === "copied" ? "✓ Link copied" : "Share QR";
+  const canWebShare = typeof navigator !== "undefined" && !!navigator.share;
 
   const shareCard = (
     <div style={st.shareCard}>
-      <div style={{ flex: 1, minWidth: 160 }}>
-        <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 6 }}>Session code</div>
-        <div style={st.codeBlock}>{code}</div>
-        <div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Players join at <strong>/join</strong></div>
+      <div style={st.shareTop}>
+        <div style={{ flex: 1, minWidth: 140 }}>
+          <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 6 }}>Session code</div>
+          <div style={st.codeBlock}>{code}</div>
+          <div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Players join at <strong>/join</strong></div>
+        </div>
+        <div style={st.shareButtons}>
+          {/* Primary share button — opens native share tray on mobile */}
+          <button
+            style={{
+              ...st.btnShare,
+              background: shareStatus !== "idle" ? "rgba(0,200,80,0.85)" : ORANGE,
+            }}
+            onClick={shareLink}
+          >
+            {canWebShare ? "⬆" : "📋"} {shareLinkLabel}
+          </button>
+
+          {/* QR toggle + share */}
+          <button
+            style={{
+              ...st.btnShareSecondary,
+              borderColor: showQR ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.20)",
+              background: showQR ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.07)",
+            }}
+            onClick={() => setShowQR((v) => !v)}
+          >
+            QR {showQR ? "▲" : "▼"}
+          </button>
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center" }}>
-        <button style={{ ...st.btn, background: copied ? "rgba(0,200,80,0.15)" : "rgba(255,255,255,0.07)", borderColor: copied ? "rgba(0,200,80,0.45)" : "rgba(255,255,255,0.14)" }} onClick={copyJoinLink}>
-          {copied ? "✓ Copied!" : "Copy link"}
-        </button>
-        <button style={{ ...st.btn, borderColor: showQR ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.14)", background: showQR ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.07)" }} onClick={() => setShowQR((v) => !v)}>
-          QR code
-        </button>
-      </div>
+
       {showQR && (
-        <div style={{ width: "100%", display: "flex", justifyContent: "center", paddingTop: 4 }}>
-          <img src={qrUrl} alt={`Join ${code}`} width={140} height={140} style={{ borderRadius: 12, display: "block" }} />
+        <div style={st.qrWrap}>
+          <img
+            src={qrUrl}
+            alt={`Join ${code}`}
+            width={160}
+            height={160}
+            style={{ borderRadius: 14, display: "block" }}
+          />
+          <button
+            style={{
+              ...st.btnShareSecondary,
+              background: shareQRStatus !== "idle" ? "rgba(0,200,80,0.15)" : "rgba(255,255,255,0.07)",
+              borderColor: shareQRStatus !== "idle" ? "rgba(0,200,80,0.45)" : "rgba(255,255,255,0.20)",
+              opacity: shareQRStatus === "loading" ? 0.6 : 1,
+            }}
+            onClick={shareQR}
+            disabled={shareQRStatus === "loading"}
+          >
+            {canWebShare ? "⬆" : "📋"} {shareQRLabel}
+          </button>
+          <div style={st.hint}>Scan to join on any phone</div>
         </div>
       )}
     </div>
@@ -416,7 +533,6 @@ export default function OrganiserPage() {
   const complete = session.matches.filter((m) => m.status === "COMPLETE");
   const courts = Array.from({ length: session.courts }, (_, i) => i + 1);
 
-  // ── Leaderboard with W/D/L ────────────────────────────────────────────────
   const leaderboard: LeaderRow[] = (() => {
     const base = new Map<string, LeaderRow>();
     for (const p of session.players) {
@@ -539,7 +655,6 @@ export default function OrganiserPage() {
                 </div>
                 <div style={st.names}>{b1} & {b2}</div>
 
-                {/* Organiser score entry — shown when match is in play and no score submitted yet */}
                 {canEnterScore && (
                   <div style={st.scoreEntryBox}>
                     <div style={st.scoreEntryLabel}>Enter score</div>
