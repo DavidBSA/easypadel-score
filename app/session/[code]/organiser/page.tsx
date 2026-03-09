@@ -29,11 +29,22 @@ type Session = {
   courts: number; pointsPerMatch: number; maxPlayers: number | null;
   players: Player[]; matches: Match[];
 };
-type LeaderRow = { playerId: string; name: string; played: number; pointsFor: number; pointsAgainst: number; diff: number };
+type LeaderRow = {
+  playerId: string; name: string;
+  played: number; wins: number; draws: number; losses: number;
+  pointsFor: number; pointsAgainst: number; diff: number;
+};
 
-function pill(label: string, bg: string, border: string): React.ReactNode {
+function pill(label: string, bg: string, border: string, onClick?: () => void): React.ReactNode {
   return (
-    <span style={{ display: "inline-block", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 1000, background: bg, border: `1px solid ${border}`, color: WHITE }}>
+    <span
+      onClick={onClick}
+      style={{
+        display: "inline-block", borderRadius: 999, padding: "4px 10px",
+        fontSize: 11, fontWeight: 1000, background: bg, border: `1px solid ${border}`, color: WHITE,
+        cursor: onClick ? "pointer" : "default",
+      }}
+    >
       {label}
     </span>
   );
@@ -170,7 +181,6 @@ export default function OrganiserPage() {
     });
   }
 
-  // One-tap confirm: locks the already-submitted PENDING score as final
   async function confirmScore(matchId: string) {
     if (!deviceId) return;
     setConfirmLoading(matchId);
@@ -231,9 +241,10 @@ export default function OrganiserPage() {
     lobbyCard: { borderRadius: 18, padding: 18, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)" },
     startSection: { marginTop: 16, borderRadius: 16, padding: 16, background: "rgba(0,200,80,0.06)", border: "1px solid rgba(0,200,80,0.20)", display: "flex", gap: 14, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const },
     lbWrap: { marginTop: 4, borderRadius: 18, padding: 14, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 8 },
-    lbHead: { display: "grid", gridTemplateColumns: "40px 1fr 64px 110px 64px", gap: 8, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 10px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
-    lbRow: { display: "grid", gridTemplateColumns: "40px 1fr 64px 110px 64px", gap: 8, alignItems: "center", borderRadius: 12, padding: "10px 10px" },
+    lbHead: { display: "grid", gridTemplateColumns: "40px 1fr 90px 110px 64px", gap: 8, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 10px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
+    lbRow: { display: "grid", gridTemplateColumns: "40px 1fr 90px 110px 64px", gap: 8, alignItems: "center", borderRadius: 12, padding: "10px 10px" },
     lbRight: { textAlign: "right" as const },
+    lbCenter: { textAlign: "center" as const },
     hint: { fontSize: 12, opacity: 0.55, color: WARM_WHITE, lineHeight: 1.4 },
   };
 
@@ -366,15 +377,37 @@ export default function OrganiserPage() {
   const complete = session.matches.filter((m) => m.status === "COMPLETE");
   const courts = Array.from({ length: session.courts }, (_, i) => i + 1);
 
+  // ── Leaderboard with W/D/L ────────────────────────────────────────────────
   const leaderboard: LeaderRow[] = (() => {
     const base = new Map<string, LeaderRow>();
-    for (const p of session.players) base.set(p.id, { playerId: p.id, name: p.name, played: 0, pointsFor: 0, pointsAgainst: 0, diff: 0 });
+    for (const p of session.players) {
+      base.set(p.id, { playerId: p.id, name: p.name, played: 0, wins: 0, draws: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, diff: 0 });
+    }
     for (const m of complete) {
       const pA = m.pointsA ?? 0; const pB = m.pointsB ?? 0;
-      for (const pid of [m.teamAPlayer1, m.teamAPlayer2]) { const r = base.get(pid); if (r) { r.played++; r.pointsFor += pA; r.pointsAgainst += pB; } }
-      for (const pid of [m.teamBPlayer1, m.teamBPlayer2]) { const r = base.get(pid); if (r) { r.played++; r.pointsFor += pB; r.pointsAgainst += pA; } }
+      for (const pid of [m.teamAPlayer1, m.teamAPlayer2]) {
+        const r = base.get(pid);
+        if (r) {
+          r.played++;
+          r.pointsFor += pA; r.pointsAgainst += pB;
+          if (pA > pB) r.wins++;
+          else if (pA === pB) r.draws++;
+          else r.losses++;
+        }
+      }
+      for (const pid of [m.teamBPlayer1, m.teamBPlayer2]) {
+        const r = base.get(pid);
+        if (r) {
+          r.played++;
+          r.pointsFor += pB; r.pointsAgainst += pA;
+          if (pB > pA) r.wins++;
+          else if (pB === pA) r.draws++;
+          else r.losses++;
+        }
+      }
     }
-    return Array.from(base.values()).map((r) => ({ ...r, diff: r.pointsFor - r.pointsAgainst }))
+    return Array.from(base.values())
+      .map((r) => ({ ...r, diff: r.pointsFor - r.pointsAgainst }))
       .sort((a, b) => b.diff !== a.diff ? b.diff - a.diff : b.pointsFor !== a.pointsFor ? b.pointsFor - a.pointsFor : a.name.localeCompare(b.name));
   })();
 
@@ -392,9 +425,19 @@ export default function OrganiserPage() {
         <div style={st.pillsRow}>
           {pill(`${inProgress.length} playing`, "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
           {pill(`${pending.length} queued`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
-          {pill(`${complete.length} done`, "rgba(0,200,80,0.12)", "rgba(0,200,80,0.35)")}
+          {pill(
+            `${complete.length} done`,
+            "rgba(0,200,80,0.12)",
+            "rgba(0,200,80,0.35)",
+            complete.length > 0 ? () => router.push(`/session/${code}/organiser/results`) : undefined
+          )}
           {conflicts.length > 0 && pill(`⚠ ${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""}`, "rgba(255,64,64,0.15)", "rgba(255,64,64,0.4)")}
         </div>
+        {complete.length > 0 && (
+          <div style={{ ...st.hint, marginTop: 6 }}>
+            Tap <strong style={{ color: GREEN }}>{complete.length} done</strong> to view and edit confirmed match scores.
+          </div>
+        )}
 
         {shareCard}
         <div style={st.divider} />
@@ -513,12 +556,23 @@ export default function OrganiserPage() {
         <div style={st.divider} />
 
         {/* Leaderboard */}
-        <div style={st.sectionLabel}>Leaderboard</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const }}>Leaderboard</div>
+          {complete.length > 0 && (
+            <button
+              style={{ borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(0,200,80,0.35)", background: "rgba(0,200,80,0.08)", color: GREEN, whiteSpace: "nowrap" as const }}
+              onClick={() => router.push(`/session/${code}/organiser/results`)}
+            >
+              View all results →
+            </button>
+          )}
+        </div>
+
         <div style={st.lbWrap}>
           <div style={st.lbHead}>
-            <div style={{ textAlign: "center" as const }}>Rank</div>
+            <div style={st.lbCenter}>Rank</div>
             <div>Player</div>
-            <div style={st.lbRight}>Played</div>
+            <div style={st.lbCenter}>W / D / L</div>
             <div style={st.lbRight}>Points</div>
             <div style={st.lbRight}>Diff</div>
           </div>
@@ -528,7 +582,13 @@ export default function OrganiserPage() {
               <div key={r.playerId} style={{ ...st.lbRow, background: isTop3 ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.04)", border: `1px solid ${isTop3 ? "rgba(255,107,0,0.30)" : "rgba(255,255,255,0.07)"}` }}>
                 <div style={{ fontSize: 15, fontWeight: 1100, textAlign: "center" as const, color: idx === 0 && r.played > 0 ? ORANGE : WHITE }}>{idx + 1}</div>
                 <div style={{ fontWeight: 950, fontSize: 14 }}>{r.name}</div>
-                <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1000, opacity: 0.8 }}>{r.played}</div>
+                <div style={{ ...st.lbCenter, fontSize: 13, fontWeight: 1000 }}>
+                  <span style={{ color: GREEN }}>{r.wins}</span>
+                  <span style={{ opacity: 0.35, margin: "0 3px" }}>/</span>
+                  <span style={{ color: WHITE }}>{r.draws}</span>
+                  <span style={{ opacity: 0.35, margin: "0 3px" }}>/</span>
+                  <span style={{ color: RED }}>{r.losses}</span>
+                </div>
                 <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1000 }}>{r.pointsFor} – {r.pointsAgainst}</div>
                 <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1100, color: r.diff > 0 ? GREEN : r.diff < 0 ? RED : WHITE }}>{r.diff > 0 ? `+${r.diff}` : r.diff}</div>
               </div>

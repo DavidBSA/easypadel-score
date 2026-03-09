@@ -113,3 +113,54 @@ export async function POST(
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+// ── PATCH: organiser edits a confirmed match score ────────────────────────────
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const body = await req.json();
+    const { deviceId, pointsA, pointsB } = body;
+
+    if (!deviceId) {
+      return NextResponse.json({ error: "deviceId required" }, { status: 400 });
+    }
+    if (pointsA === undefined || pointsB === undefined) {
+      return NextResponse.json({ error: "pointsA and pointsB required" }, { status: 400 });
+    }
+    if (typeof pointsA !== "number" || typeof pointsB !== "number" || pointsA < 0 || pointsB < 0) {
+      return NextResponse.json({ error: "pointsA and pointsB must be non-negative numbers" }, { status: 400 });
+    }
+
+    const device = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!device?.isOrganiser) {
+      return NextResponse.json({ error: "Organiser access required" }, { status: 403 });
+    }
+
+    const match = await prisma.match.findUnique({ where: { id } });
+    if (!match) {
+      return NextResponse.json({ error: "Match not found" }, { status: 404 });
+    }
+    if (match.status !== "COMPLETE") {
+      return NextResponse.json({ error: "Can only edit completed matches" }, { status: 409 });
+    }
+
+    const [updated] = await prisma.$transaction([
+      prisma.match.update({
+        where: { id },
+        data: { pointsA, pointsB, scoreStatus: "CONFIRMED" },
+      }),
+      prisma.session.update({
+        where: { id: match.sessionId },
+        data: { updatedAt: new Date() },
+      }),
+    ]);
+
+    return NextResponse.json({ match: updated, result: "EDITED" });
+  } catch (err) {
+    console.error("PATCH /api/matches/[id]/score error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
