@@ -285,7 +285,7 @@ export default function NewSessionPage() {
                   : `A1: ${dist[0]} pts · B1: ${dist[1]} pts · A2: ${dist[2]} pts · B2: ${dist[3]} pts`}
               </div>
             </div>
-            <div style={st.small}>Serve order rotates every 4 points. Totals adjust automatically with points per match.</div>
+            <div style={st.small}>Totals adjust automatically with points per match.</div>
 
             <div style={st.divider} />
 
