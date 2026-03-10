@@ -17,9 +17,9 @@ function makePin(): string {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { format, courts, pointsPerMatch, maxPlayers } = body;
+    const { format, courts, pointsPerMatch, servesPerRotation, maxPlayers } = body;
 
-    if (!format || !["MIXED", "TEAM"].includes(format)) {
+    if (!format || !["SINGLE", "MIXED", "TEAM"].includes(format)) {
       return NextResponse.json({ error: "Invalid format" }, { status: 400 });
     }
     if (!courts || courts < 1 || courts > 6) {
@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
           format,
           courts,
           pointsPerMatch: pointsPerMatch ?? 21,
+          servesPerRotation: servesPerRotation ?? 4,
           maxPlayers: maxPlayers ?? null,
         },
       });
