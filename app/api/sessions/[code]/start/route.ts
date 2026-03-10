@@ -23,14 +23,13 @@ export async function POST(
     }
 
     const body = await req.json();
-    const { deviceId } = body;
+    const { deviceId, teamA, teamB } = body;
 
     const device = session.devices.find((d) => d.id === deviceId && d.isOrganiser);
     if (!device) {
       return NextResponse.json({ error: "Organiser access required." }, { status: 403 });
     }
 
-    // Format-specific minimum player validation
     const isSingle = session.format === "SINGLE";
     const isTeam   = session.format === "TEAM";
     const minPlayers = isSingle ? 4 : session.courts * 4;
@@ -46,7 +45,6 @@ export async function POST(
       );
     }
 
-    // TEAM requires players in pairs — must be even count
     if (isTeam && session.players.length % 2 !== 0) {
       return NextResponse.json(
         { error: "Team Americano requires an even number of players." },
@@ -54,7 +52,23 @@ export async function POST(
       );
     }
 
-    // Build match queue based on format
+    // Validate explicit SINGLE team assignment if provided
+    if (isSingle && (teamA || teamB)) {
+      const validIds = new Set(session.players.map((p) => p.id));
+      const provided: string[] = [...(teamA ?? []), ...(teamB ?? [])];
+      if (
+        !Array.isArray(teamA) || teamA.length !== 2 ||
+        !Array.isArray(teamB) || teamB.length !== 2 ||
+        provided.some((id) => !validIds.has(id)) ||
+        new Set(provided).size !== 4
+      ) {
+        return NextResponse.json(
+          { error: "Invalid team assignment — provide exactly 2 unique players per team." },
+          { status: 400 }
+        );
+      }
+    }
+
     let queueMatches: {
       queuePosition: number;
       teamAPlayer1: string;
@@ -64,21 +78,28 @@ export async function POST(
     }[];
 
     if (isSingle) {
-      // One match, four players, no further queue
-      const [p1, p2, p3, p4] = session.players;
-      queueMatches = [
-        {
+      // Use explicit assignment if provided, otherwise fall back to join order
+      const useExplicit = Array.isArray(teamA) && teamA.length === 2 &&
+                          Array.isArray(teamB) && teamB.length === 2;
+      if (useExplicit) {
+        queueMatches = [{
+          queuePosition: 0,
+          teamAPlayer1: teamA[0],
+          teamAPlayer2: teamA[1],
+          teamBPlayer1: teamB[0],
+          teamBPlayer2: teamB[1],
+        }];
+      } else {
+        const [p1, p2, p3, p4] = session.players;
+        queueMatches = [{
           queuePosition: 0,
           teamAPlayer1: p1.id,
           teamAPlayer2: p2.id,
           teamBPlayer1: p3.id,
           teamBPlayer2: p4.id,
-        },
-      ];
+        }];
+      }
     } else if (isTeam) {
-      // Pair players by join order: 0&1, 2&3, 4&5 …
-      // When TEAM lobby is built, pairing will be explicit.
-      // For now index-based pairing is the fallback.
       const teams: QueueTeam[] = [];
       for (let i = 0; i + 1 < session.players.length; i += 2) {
         const p1 = session.players[i];
@@ -117,7 +138,6 @@ export async function POST(
       });
     });
 
-    // Auto-assign first N matches to courts 1..N
     const createdMatches = await prisma.match.findMany({
       where: { sessionId: session.id },
       orderBy: { queuePosition: "asc" },
