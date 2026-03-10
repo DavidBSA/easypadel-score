@@ -31,7 +31,7 @@ export default function NewSessionPage() {
   const [courts, setCourts] = useState(2);
   const [pointsPerMatch, setPointsPerMatch] = useState(21);
   const [slotMode, setSlotMode] = useState<"open" | "fixed">("open");
-  const [maxPlayers, setMaxPlayers] = useState(16);
+  const [maxTeams, setMaxTeams] = useState(8);
   const [sets, setSets] = useState(3);
   const [deuceMode, setDeuceMode] = useState<DeuceMode>("star");
   const [tiebreak, setTiebreak] = useState(true);
@@ -40,8 +40,14 @@ export default function NewSessionPage() {
   const [error, setError] = useState("");
 
   const isSingle = format === "SINGLE";
+  const isTeam = format === "TEAM";
   const effectiveCourts = isSingle ? 1 : courts;
   const minPlayers = isSingle ? 4 : effectiveCourts * 4;
+  const minTeams = effectiveCourts * 2;
+
+  // For API: maxPlayers is always in individual players
+  const maxPlayersForAPI = isTeam ? maxTeams * 2 : maxTeams;
+  const minSlotsForAPI = isTeam ? minTeams : minPlayers;
 
   const dist = useMemo(() => serveDistribution(pointsPerMatch), [pointsPerMatch]);
   const serveIsEven = useMemo(() => dist[0] === dist[1] && dist[1] === dist[2] && dist[2] === dist[3], [dist]);
@@ -65,7 +71,7 @@ export default function NewSessionPage() {
           courts: effectiveCourts,
           pointsPerMatch: isSingle ? 0 : pointsPerMatch,
           servesPerRotation: isSingle ? null : 4,
-          maxPlayers: isSingle ? 4 : slotMode === "fixed" ? Math.max(maxPlayers, minPlayers) : null,
+          maxPlayers: isSingle ? 4 : slotMode === "fixed" ? Math.max(maxPlayersForAPI, minSlotsForAPI) : null,
         }),
       });
       const data = await r.json();
@@ -150,6 +156,8 @@ export default function NewSessionPage() {
     border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.10)",
     background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)",
   });
+
+  const effectiveMaxTeams = Math.max(maxTeams, minTeams);
 
   return (
     <div style={st.page}>
@@ -258,7 +266,11 @@ export default function NewSessionPage() {
                 </div>
               </div>
             </div>
-            <div style={st.small}>Minimum {minPlayers} players needed to start ({courts} court{courts > 1 ? "s" : ""} × 4)</div>
+            <div style={st.small}>
+              {isTeam
+                ? `Minimum ${minTeams} teams needed to start (${courts} court${courts > 1 ? "s" : ""} × 2)`
+                : `Minimum ${minPlayers} players needed to start (${courts} court${courts > 1 ? "s" : ""} × 4)`}
+            </div>
 
             <div style={st.divider} />
 
@@ -290,13 +302,15 @@ export default function NewSessionPage() {
             </div>
             {slotMode === "fixed" && (
               <div style={{ ...st.settingBox, marginTop: 10 }}>
-                <div style={st.settingLabel}>Max players</div>
+                <div style={st.settingLabel}>{isTeam ? "Max teams" : "Max players"}</div>
                 <div style={st.stepper}>
-                  <button style={st.stepBtn} onClick={() => setMaxPlayers((n) => Math.max(minPlayers, n - 1))}>−</button>
-                  <div style={st.stepVal}>{Math.max(maxPlayers, minPlayers)}</div>
-                  <button style={st.stepBtn} onClick={() => setMaxPlayers((n) => Math.min(64, n + 1))}>+</button>
+                  <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.max(isTeam ? minTeams : minPlayers, n - 1))}>−</button>
+                  <div style={st.stepVal}>{effectiveMaxTeams}</div>
+                  <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.min(isTeam ? 32 : 64, n + 1))}>+</button>
                 </div>
-                <div style={{ ...st.small, marginTop: 8 }}>Min {minPlayers} · Max 64</div>
+                <div style={{ ...st.small, marginTop: 8 }}>
+                  Min {isTeam ? minTeams : minPlayers} · Max {isTeam ? 32 : 64}
+                </div>
               </div>
             )}
             <div style={st.hint}>Players join at /join using the session code. You can also add them manually from the organiser view.</div>
