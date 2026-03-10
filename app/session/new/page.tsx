@@ -12,8 +12,6 @@ const WARM_WHITE = "#F5F5F5";
 type Format = "SINGLE" | "MIXED" | "TEAM";
 type DeuceMode = "star" | "golden" | "traditional";
 
-// Correct algorithm: base = floor(pts/4), remainder distributed to last players in serve order
-// e.g. 18pts → A1:4, B1:4, A2:5, B2:5 | 21pts → A1:5, B1:5, A2:5, B2:6 | 20pts → 5,5,5,5
 function serveDistribution(pts: number): [number, number, number, number] {
   const base = Math.floor(pts / 4);
   const rem = pts % 4;
@@ -32,7 +30,6 @@ export default function NewSessionPage() {
   const [format, setFormat] = useState<Format>("MIXED");
   const [courts, setCourts] = useState(2);
   const [pointsPerMatch, setPointsPerMatch] = useState(21);
-  const [servesPerRotation, setServesPerRotation] = useState(4);
   const [slotMode, setSlotMode] = useState<"open" | "fixed">("open");
   const [maxPlayers, setMaxPlayers] = useState(16);
   const [sets, setSets] = useState(3);
@@ -47,12 +44,7 @@ export default function NewSessionPage() {
   const minPlayers = isSingle ? 4 : effectiveCourts * 4;
 
   const dist = useMemo(() => serveDistribution(pointsPerMatch), [pointsPerMatch]);
-  const serveHint = useMemo(() => {
-    const [a1, b1, a2, b2] = dist;
-    if (a1 === b1 && b1 === a2 && a2 === b2)
-      return { even: true, text: `✓ Equal serves — each player serves ${a1} pts` };
-    return { even: false, text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts` };
-  }, [dist]);
+  const serveIsEven = useMemo(() => dist[0] === dist[1] && dist[1] === dist[2] && dist[2] === dist[3], [dist]);
 
   const singleSummary = useMemo(() => {
     const deuce = DEUCE_OPTIONS.find((d) => d.value === deuceMode)?.label ?? "Star Point";
@@ -72,7 +64,7 @@ export default function NewSessionPage() {
           format,
           courts: effectiveCourts,
           pointsPerMatch: isSingle ? 0 : pointsPerMatch,
-          servesPerRotation: isSingle ? null : servesPerRotation,
+          servesPerRotation: isSingle ? null : 4,
           maxPlayers: isSingle ? 4 : slotMode === "fixed" ? Math.max(maxPlayers, minPlayers) : null,
         }),
       });
@@ -125,15 +117,13 @@ export default function NewSessionPage() {
     small: { fontSize: 12, opacity: 0.45, marginTop: 6, lineHeight: 1.35 },
     errorBox: { marginTop: 12, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
     hint: { fontSize: 12, opacity: 0.55, marginTop: 10, lineHeight: 1.45, color: WARM_WHITE },
-    serveRow: { display: "flex", gap: 10, flexWrap: "wrap" as const },
-    hintEven: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
-    hintOdd: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
     summaryBar: { marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.18)", fontSize: 12, fontWeight: 900, color: WARM_WHITE },
     pillRow: { display: "flex", gap: 8 },
     deuceGrid: { display: "grid", gap: 8 },
     toggle: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 14, padding: "12px 14px" },
     toggleLabel: { fontWeight: 900, fontSize: 14 },
     toggleDesc: { fontSize: 12, opacity: 0.5, color: WARM_WHITE, marginTop: 3 },
+    serveCard: { borderRadius: 14, padding: "14px 16px", background: "rgba(255,107,0,0.10)", border: `1px solid rgba(255,107,0,0.35)`, display: "grid", gap: 6 },
   };
 
   const formatCard = (active: boolean): React.CSSProperties => ({
@@ -146,13 +136,6 @@ export default function NewSessionPage() {
     borderRadius: 14, padding: 14, cursor: "pointer",
     border: `1px solid ${active ? "rgba(255,107,0,0.55)" : "rgba(255,255,255,0.08)"}`,
     background: active ? "rgba(255,107,0,0.08)" : "rgba(255,255,255,0.04)",
-  });
-
-  const serveChip = (active: boolean): React.CSSProperties => ({
-    borderRadius: 12, padding: "10px 18px", fontSize: 14, fontWeight: 1000, cursor: "pointer",
-    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
-    background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
-    color: active ? WHITE : WARM_WHITE, whiteSpace: "nowrap" as const,
   });
 
   const pillStyle = (active: boolean): React.CSSProperties => ({
@@ -198,6 +181,7 @@ export default function NewSessionPage() {
 
         <div style={st.divider} />
 
+        {/* ── SINGLE: Tennis settings ── */}
         {isSingle && (
           <>
             <div style={st.summaryBar}>
@@ -252,6 +236,7 @@ export default function NewSessionPage() {
           </>
         )}
 
+        {/* ── MIXED / TEAM: Americano settings ── */}
         {!isSingle && (
           <>
             <div style={st.sectionLabel}>Match settings</div>
@@ -277,16 +262,18 @@ export default function NewSessionPage() {
 
             <div style={st.divider} />
 
-            <div style={st.sectionLabel}>Serves before rotation</div>
-            <div style={st.serveRow}>
-              {[2, 4].map((n) => (
-                <div key={n} style={serveChip(servesPerRotation === n)} onClick={() => setServesPerRotation(n)}>
-                  {n} pts per serve
-                </div>
-              ))}
+            <div style={st.sectionLabel}>Serve rotation</div>
+            <div style={st.serveCard}>
+              <div style={{ fontSize: 13, fontWeight: 1000, color: ORANGE, letterSpacing: 0.3 }}>
+                A1 → B1 → A2 → B2
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 900, color: WHITE }}>
+                {serveIsEven
+                  ? `✓ Equal serves — each player serves ${dist[0]} pts`
+                  : `A1: ${dist[0]} pts · B1: ${dist[1]} pts · A2: ${dist[2]} pts · B2: ${dist[3]} pts`}
+              </div>
             </div>
-            <div style={serveHint.even ? st.hintEven : st.hintOdd}>{serveHint.text}</div>
-            <div style={st.small}>Serve order per match: A1 → B1 → A2 → B2, cycling every {servesPerRotation} pts.</div>
+            <div style={st.small}>Serve order rotates every 4 points. Totals adjust automatically with points per match.</div>
 
             <div style={st.divider} />
 
