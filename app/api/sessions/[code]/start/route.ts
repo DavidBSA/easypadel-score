@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../../../lib/prisma";
-import { generateMatchQueue } from "../../../../../lib/queue";
+import { generateMatchQueue, generateTeamMatchQueue } from "../../../../../lib/queue";
+import type { QueueTeam } from "../../../../../lib/queue";
 
 export async function POST(
   req: NextRequest,
@@ -29,21 +30,76 @@ export async function POST(
       return NextResponse.json({ error: "Organiser access required." }, { status: 403 });
     }
 
-    const minPlayers = session.courts * 4;
+    // Format-specific minimum player validation
+    const isSingle = session.format === "SINGLE";
+    const isTeam   = session.format === "TEAM";
+    const minPlayers = isSingle ? 4 : session.courts * 4;
+
     if (session.players.length < minPlayers) {
       return NextResponse.json(
-        { error: `Need at least ${minPlayers} players for ${session.courts} court${session.courts > 1 ? "s" : ""}.` },
+        {
+          error: isSingle
+            ? "Single match requires exactly 4 players."
+            : `Need at least ${minPlayers} players for ${session.courts} court${session.courts > 1 ? "s" : ""}.`,
+        },
         { status: 400 }
       );
     }
 
-    const queueMatches = generateMatchQueue(
-      session.players.map((p) => ({ id: p.id, name: p.name, isActive: true })),
-      session.courts
-    );
+    // TEAM requires players in pairs — must be even count
+    if (isTeam && session.players.length % 2 !== 0) {
+      return NextResponse.json(
+        { error: "Team Americano requires an even number of players." },
+        { status: 400 }
+      );
+    }
+
+    // Build match queue based on format
+    let queueMatches: {
+      queuePosition: number;
+      teamAPlayer1: string;
+      teamAPlayer2: string;
+      teamBPlayer1: string;
+      teamBPlayer2: string;
+    }[];
+
+    if (isSingle) {
+      // One match, four players, no further queue
+      const [p1, p2, p3, p4] = session.players;
+      queueMatches = [
+        {
+          queuePosition: 0,
+          teamAPlayer1: p1.id,
+          teamAPlayer2: p2.id,
+          teamBPlayer1: p3.id,
+          teamBPlayer2: p4.id,
+        },
+      ];
+    } else if (isTeam) {
+      // Pair players by join order: 0&1, 2&3, 4&5 …
+      // When TEAM lobby is built, pairing will be explicit.
+      // For now index-based pairing is the fallback.
+      const teams: QueueTeam[] = [];
+      for (let i = 0; i + 1 < session.players.length; i += 2) {
+        const p1 = session.players[i];
+        const p2 = session.players[i + 1];
+        teams.push({
+          id: `${p1.id}_${p2.id}`,
+          player1Id: p1.id,
+          player2Id: p2.id,
+          isActive: true,
+        });
+      }
+      queueMatches = generateTeamMatchQueue(teams, session.courts);
+    } else {
+      // MIXED
+      queueMatches = generateMatchQueue(
+        session.players.map((p) => ({ id: p.id, name: p.name, isActive: true })),
+        session.courts
+      );
+    }
 
     await prisma.$transaction(async (tx) => {
-      // Create the full match queue
       await tx.match.createMany({
         data: queueMatches.map((m) => ({
           sessionId: session.id,
@@ -55,7 +111,6 @@ export async function POST(
         })),
       });
 
-      // Activate session
       await tx.session.update({
         where: { id: session.id },
         data: { status: "ACTIVE" },
@@ -63,13 +118,13 @@ export async function POST(
     });
 
     // Auto-assign first N matches to courts 1..N
-    // Fetch created matches in queue order
     const createdMatches = await prisma.match.findMany({
       where: { sessionId: session.id },
       orderBy: { queuePosition: "asc" },
     });
 
-    const autoAssign = createdMatches.slice(0, session.courts);
+    const courtsToFill = isSingle ? 1 : session.courts;
+    const autoAssign = createdMatches.slice(0, courtsToFill);
 
     await prisma.$transaction([
       ...autoAssign.map((m, idx) =>

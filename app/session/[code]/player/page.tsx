@@ -23,12 +23,45 @@ type Match = {
   scoreSubmissions: ScoreSubmission[];
 };
 type Session = {
-  code: string; format: string; status: string;
-  courts: number; pointsPerMatch: number;
-  players: Player[]; matches: Match[];
+  code: string;
+  format: "SINGLE" | "MIXED" | "TEAM";
+  status: string;
+  courts: number;
+  pointsPerMatch: number;
+  servesPerRotation: number | null;
+  players: Player[];
+  matches: Match[];
 };
 
 type ScoringMode = "final" | "live";
+type Team = "A" | "B";
+
+function formatLabel(f: "SINGLE" | "MIXED" | "TEAM"): string {
+  if (f === "SINGLE") return "Single Match";
+  if (f === "MIXED") return "Mixed Americano";
+  return "Team Americano";
+}
+
+// Returns [A1, B1, A2, B2] serve counts
+function serveDistribution(pts: number, spr: number): [number, number, number, number] {
+  const cycle = spr * 4;
+  const full = Math.floor(pts / cycle);
+  const rem = pts % cycle;
+  return [0, 1, 2, 3].map(
+    (i) => full * spr + Math.min(Math.max(rem - i * spr, 0), spr)
+  ) as [number, number, number, number];
+}
+
+// Returns which player is currently serving
+// Serve order if first="A": A0, B0, A1, B1
+function computeCurrentServer(first: Team, totalPlayed: number, spr: number): { team: Team; slot: 0 | 1 } {
+  const pos = Math.floor(totalPlayed / spr) % 4;
+  const order: { team: Team; slot: 0 | 1 }[] =
+    first === "A"
+      ? [{ team: "A", slot: 0 }, { team: "B", slot: 0 }, { team: "A", slot: 1 }, { team: "B", slot: 1 }]
+      : [{ team: "B", slot: 0 }, { team: "A", slot: 0 }, { team: "B", slot: 1 }, { team: "A", slot: 1 }];
+  return order[pos];
+}
 
 function chipStyle(active: boolean): React.CSSProperties {
   return {
@@ -71,11 +104,8 @@ export default function PlayerPage() {
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState("");
 
-  // Scoring state
   const [scoringMode, setScoringMode] = useState<ScoringMode>("final");
-  // Final mode: player enters their team's score only
   const [myScore, setMyScore] = useState<string>("");
-  // Live mode: both scores via steppers
   const [scoreA, setScoreA] = useState(0);
   const [scoreB, setScoreB] = useState(0);
   const [submitting, setSubmitting] = useState(false);
@@ -102,7 +132,7 @@ export default function PlayerPage() {
 
   useEffect(() => {
     if (!code) return;
-    fetch(`/api/sessions/${code}`).then((r) => r.json()).then(applySession).catch(() => {});
+    fetch(`/api/sessions/${code}`).then((r) => r.json()).then(applySession).catch(() => { });
     const es = new EventSource(`/api/sessions/${code}/stream`);
     esRef.current = es;
     es.onmessage = (e) => { try { applySession(JSON.parse(e.data)); } catch { /* ignore */ } };
@@ -110,7 +140,7 @@ export default function PlayerPage() {
       es.close();
       if (!pollRef.current) {
         pollRef.current = setInterval(() => {
-          fetch(`/api/sessions/${code}`).then((r) => r.json()).then(applySession).catch(() => {});
+          fetch(`/api/sessions/${code}`).then((r) => r.json()).then(applySession).catch(() => { });
         }, 3000);
       }
     };
@@ -176,7 +206,7 @@ export default function PlayerPage() {
     setSubmitting(false);
   }
 
-  // Derived
+  // ── Derived ────────────────────────────────────────────────────────────────
   const myMatch = (selectedPlayer && session)
     ? session.matches.find((m) =>
         (m.status === "IN_PROGRESS" || m.status === "COMPLETE") &&
@@ -184,17 +214,44 @@ export default function PlayerPage() {
       )
     : undefined;
 
-  const myTeam: "A" | "B" | null = (myMatch && selectedPlayer)
+  const myTeam: Team | null = (myMatch && selectedPlayer)
     ? ([myMatch.teamAPlayer1, myMatch.teamAPlayer2].includes(selectedPlayer.id) ? "A" : "B")
     : null;
 
   const alreadySubmitted = !!(myMatch && deviceId && myMatch.scoreSubmissions.some((s) => s.deviceId === deviceId));
   const nameById = (session?.players ?? []).reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
   const total = session?.pointsPerMatch ?? 21;
+  const spr = session?.servesPerRotation ?? 4;
+  const isSingle = session?.format === "SINGLE";
+  const showServeHelper = !isSingle && !!session?.servesPerRotation;
 
-  // Derived other-team score for final mode display
   const myScoreNum = parseInt(myScore, 10);
   const otherScore = (!isNaN(myScoreNum) && myScoreNum >= 0 && myScoreNum <= total) ? total - myScoreNum : null;
+
+  // Serve helper for live mode — based on points entered so far
+  const liveServer = (() => {
+    if (!showServeHelper || !myMatch || !myTeam) return null;
+    const totalPlayed = scoreA + scoreB;
+    const server = computeCurrentServer("A", totalPlayed, spr);
+    const playerNames = {
+      A: [nameById[myMatch.teamAPlayer1] ?? "A1", nameById[myMatch.teamAPlayer2] ?? "A2"],
+      B: [nameById[myMatch.teamBPlayer1] ?? "B1", nameById[myMatch.teamBPlayer2] ?? "B2"],
+    };
+    return playerNames[server.team][server.slot];
+  })();
+
+  // Serve distribution hint for final mode
+  const serveHint = (() => {
+    if (!showServeHelper || !myMatch) return null;
+    const [a1c, b1c, a2c, b2c] = serveDistribution(total, spr);
+    const a1n = nameById[myMatch.teamAPlayer1] ?? "A1";
+    const b1n = nameById[myMatch.teamBPlayer1] ?? "B1";
+    const a2n = nameById[myMatch.teamAPlayer2] ?? "A2";
+    const b2n = nameById[myMatch.teamBPlayer2] ?? "B2";
+    if (a1c === b1c && b1c === a2c && a2c === b2c)
+      return `✓ Equal serves — each player serves ${a1c} pts`;
+    return `${a1n}: ${a1c} · ${b1n}: ${b1c} · ${a2n}: ${a2c} · ${b2n}: ${b2c}`;
+  })();
 
   const st: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
@@ -217,13 +274,14 @@ export default function PlayerPage() {
     autoScore: { textAlign: "center" as const, borderRadius: 14, padding: "16px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", fontSize: 48, fontWeight: 1200, lineHeight: 1, color: WARM_WHITE, opacity: 0.4 },
     teamLabel: { fontWeight: 1000, fontSize: 13, opacity: 0.75, marginBottom: 8, textAlign: "center" as const },
     hint: { fontSize: 12, color: WARM_WHITE, opacity: 0.5, textAlign: "center" as const, marginTop: 8, lineHeight: 1.4 },
+    serveBox: { marginTop: 10, borderRadius: 12, padding: "10px 14px", background: "rgba(255,107,0,0.08)", border: "1px solid rgba(255,107,0,0.25)", fontSize: 12, fontWeight: 900, color: WHITE, textAlign: "center" as const, lineHeight: 1.4 },
   };
 
   if (!bootstrapped) {
     return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
   }
 
-  // Name picker
+  // ── Name picker ────────────────────────────────────────────────────────────
   if (!selectedPlayer) {
     return (
       <div style={st.page}>
@@ -240,7 +298,7 @@ export default function PlayerPage() {
             <div style={{ opacity: 0.6, marginTop: 14, fontWeight: 900 }}>Loading player list…</div>
           ) : (
             <>
-              <div style={st.sectionLabel}>Session {code} — tap your name</div>
+              <div style={st.sectionLabel}>Session {code} · {formatLabel(session.format)} — tap your name</div>
               <div style={st.grid2}>
                 {session.players.map((p) => (
                   <div key={p.id} style={{ ...chipStyle(false), opacity: claiming ? 0.5 : 1 }}
@@ -257,16 +315,20 @@ export default function PlayerPage() {
     );
   }
 
-  // Main player view
+  // ── Main player view ───────────────────────────────────────────────────────
   let statusBlock: React.ReactNode;
 
   if (!myMatch) {
     statusBlock = (
       <div style={statusBoxStyle(WARM_WHITE)}>
         <div style={{ fontSize: 40, marginBottom: 10 }}>⏳</div>
-        <div style={{ fontWeight: 1000, fontSize: 20 }}>Waiting</div>
+        <div style={{ fontWeight: 1000, fontSize: 20 }}>
+          {isSingle ? "Match starting soon" : "Waiting"}
+        </div>
         <div style={{ opacity: 0.6, marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>
-          The organiser will assign you to a court soon.
+          {isSingle
+            ? "You're in — the organiser will start the match shortly."
+            : "The organiser will assign you to a court soon."}
         </div>
       </div>
     );
@@ -351,7 +413,6 @@ export default function PlayerPage() {
           </div>
 
           {scoringMode === "final" ? (
-            /* ── Final score mode ── */
             <>
               <div style={st.grid2}>
                 <div>
@@ -377,9 +438,11 @@ export default function PlayerPage() {
               <div style={st.hint}>
                 Enter your team's points — opponents auto-calculated from {total} total.
               </div>
+              {showServeHelper && serveHint && (
+                <div style={st.serveBox}>{serveHint}</div>
+              )}
             </>
           ) : (
-            /* ── Live scoring mode ── */
             <>
               <div style={st.grid2}>
                 <div style={{ textAlign: "center" as const }}>
@@ -402,6 +465,9 @@ export default function PlayerPage() {
               <div style={st.hint}>
                 {scoreA + scoreB} of {total} pts played. If another device also scores, both must match to confirm.
               </div>
+              {showServeHelper && liveServer && (
+                <div style={st.serveBox}>🎾 Serving now: <strong>{liveServer}</strong></div>
+              )}
             </>
           )}
 
@@ -425,7 +491,9 @@ export default function PlayerPage() {
         <div style={st.row}>
           <div>
             <div style={st.title}>Hi, {selectedPlayer.name}</div>
-            <div style={st.sub}>Session {code}</div>
+            <div style={st.sub}>
+              Session {code} · {session ? formatLabel(session.format) : ""}
+            </div>
           </div>
           <button style={st.btn} onClick={changeName}>Change name</button>
         </div>

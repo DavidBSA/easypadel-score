@@ -8,6 +8,7 @@ datasource db {
 }
 
 enum SessionFormat {
+  SINGLE
   MIXED
   TEAM
 }
@@ -31,16 +32,17 @@ enum ScoreStatus {
 }
 
 model Session {
-  id             String        @id @default(cuid())
-  code           String        @unique
-  organiserPin   String
-  format         SessionFormat
-  status         SessionStatus @default(LOBBY)
-  courts         Int
-  pointsPerMatch Int           @default(21)
-  maxPlayers     Int?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id                 String        @id @default(cuid())
+  code               String        @unique
+  organiserPin       String
+  format             SessionFormat
+  status             SessionStatus @default(LOBBY)
+  courts             Int
+  pointsPerMatch     Int           @default(21)
+  servesPerRotation  Int           @default(4)
+  maxPlayers         Int?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   players  Player[]
   matches  Match[]
@@ -64,11 +66,11 @@ model Player {
 }
 
 model Match {
-  id            String      @id @default(cuid())
+  id            String       @id @default(cuid())
   sessionId     String
   queuePosition Int
   courtNumber   Int?
-  status        MatchStatus @default(PENDING)
+  status        MatchStatus  @default(PENDING)
   teamAPlayer1  String
   teamAPlayer2  String
   teamBPlayer1  String
@@ -78,8 +80,8 @@ model Match {
   scoreStatus   ScoreStatus?
   startedAt     DateTime?
   completedAt   DateTime?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   session          Session           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   scoreSubmissions ScoreSubmission[]

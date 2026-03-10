@@ -24,9 +24,10 @@ type Match = {
   startedAt: string | null; completedAt: string | null;
 };
 type Session = {
-  id: string; code: string; format: string;
+  id: string; code: string; format: "SINGLE" | "MIXED" | "TEAM";
   status: "LOBBY" | "ACTIVE" | "COMPLETE";
-  courts: number; pointsPerMatch: number; maxPlayers: number | null;
+  courts: number; pointsPerMatch: number; servesPerRotation: number | null;
+  maxPlayers: number | null;
   players: Player[]; matches: Match[];
 };
 type LeaderRow = {
@@ -34,9 +35,13 @@ type LeaderRow = {
   played: number; wins: number; draws: number; losses: number;
   pointsFor: number; pointsAgainst: number; diff: number;
 };
-
-// courtScores: pA is null = untouched, number = organiser has set a value
 type CourtScore = { pA: number | null };
+
+function formatLabel(f: "SINGLE" | "MIXED" | "TEAM"): string {
+  if (f === "SINGLE") return "Single Match";
+  if (f === "MIXED") return "Mixed Americano";
+  return "Team Americano";
+}
 
 function pill(label: string, bg: string, border: string, onClick?: () => void): React.ReactNode {
   return (
@@ -78,7 +83,6 @@ export default function OrganiserPage() {
   const [resolveLoading, setResolveLoading] = useState<string | null>(null);
   const [confirmLoading, setConfirmLoading] = useState<string | null>(null);
 
-  // pA: null = untouched (submit disabled), number = organiser entered a value
   const [courtScores, setCourtScores] = useState<Record<string, CourtScore>>({});
   const [submitLoading, setSubmitLoading] = useState<string | null>(null);
 
@@ -108,12 +112,11 @@ export default function OrganiserPage() {
       }
       return next;
     });
-    // Only initialise court score entry for newly active matches (don't overwrite existing entries)
     setCourtScores((prev) => {
       const next = { ...prev };
       for (const m of data.matches) {
         if (m.status === "IN_PROGRESS" && !(m.id in next)) {
-          next[m.id] = { pA: null }; // null = untouched
+          next[m.id] = { pA: null };
         }
       }
       return next;
@@ -231,7 +234,6 @@ export default function OrganiserPage() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, pointsA: pA, pointsB: pB, isOrganiserOverride: true }),
       });
-      // Reset entry state after submit
       setCourtScores((prev) => ({ ...prev, [matchId]: { pA: null } }));
     } finally { setSubmitLoading(null); }
   }
@@ -244,7 +246,6 @@ export default function OrganiserPage() {
     });
   }
 
-  // ── Share helpers ──────────────────────────────────────────────────────────
   function getJoinUrl() {
     return typeof window !== "undefined" ? `${window.location.origin}/join?code=${code}` : `/join?code=${code}`;
   }
@@ -321,6 +322,7 @@ export default function OrganiserPage() {
     lbRight: { textAlign: "right" as const },
     lbCenter: { textAlign: "center" as const },
     hint: { fontSize: 12, opacity: 0.55, color: WARM_WHITE, lineHeight: 1.4 },
+    teamPairCard: { borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10, alignItems: "center" },
   };
 
   if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
@@ -351,15 +353,17 @@ export default function OrganiserPage() {
     return { a1: nameById[m.teamAPlayer1] ?? "?", a2: nameById[m.teamAPlayer2] ?? "?", b1: nameById[m.teamBPlayer1] ?? "?", b2: nameById[m.teamBPlayer2] ?? "?" };
   }
 
-  const minPlayers = session.courts * 4;
-  const canStart = session.players.length >= minPlayers;
+  const isSingle = session.format === "SINGLE";
+  const isTeam = session.format === "TEAM";
+  const minPlayers = isSingle ? 4 : session.courts * 4;
+  const canStart = isSingle ? session.players.length === 4 : session.players.length >= minPlayers;
   const canWebShare = typeof navigator !== "undefined" && !!navigator.share;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getJoinUrl())}&bgcolor=0D1B2A&color=FFFFFF&margin=10`;
+  const fLabel = formatLabel(session.format);
 
   const shareLinkLabel = shareStatus === "shared" ? "✓ Shared!" : shareStatus === "copied" ? "✓ Copied!" : "⬆ Share link";
   const shareQRLabel = shareQRStatus === "loading" ? "Loading…" : shareQRStatus === "shared" ? "✓ Shared!" : shareQRStatus === "copied" ? "✓ Link copied" : "Share QR";
 
-  // Share card shown in LOBBY only — hidden once session is ACTIVE
   const shareCard = session.status === "LOBBY" ? (
     <div style={st.shareCard}>
       <div style={st.shareTop}>
@@ -392,33 +396,79 @@ export default function OrganiserPage() {
 
   // ── LOBBY ──────────────────────────────────────────────────────────────────
   if (session.status === "LOBBY") {
+
+    // TEAM: build pairs from join order for preview
+    const teamPairs: { p1: string; p2: string }[] = [];
+    if (isTeam) {
+      for (let i = 0; i + 1 < session.players.length; i += 2) {
+        teamPairs.push({ p1: session.players[i].name, p2: session.players[i + 1].name });
+      }
+    }
+
+    const startHint = isSingle
+      ? "Exactly 4 players required. Match starts immediately."
+      : isTeam
+      ? "Players are paired in join order (1st+2nd, 3rd+4th…). Locking entries generates the full match queue."
+      : "Locking entries generates the full match queue.";
+
+    const startLabel = canStart && !startLoading
+      ? "Lock & Start →"
+      : startLoading
+      ? "Starting…"
+      : isSingle
+      ? `Need ${4 - session.players.length} more player${4 - session.players.length !== 1 ? "s" : ""}`
+      : `Need ${minPlayers - session.players.length} more player${minPlayers - session.players.length !== 1 ? "s" : ""}`;
+
     return (
       <div style={st.page}>
         <div style={st.card}>
           <div style={st.row}>
             <div>
               <div style={st.title}>Organiser · {code}</div>
-              <div style={st.sub}>{session.format} · {session.courts} court{session.courts > 1 ? "s" : ""} · {session.pointsPerMatch} pts · Waiting for players</div>
+              <div style={st.sub}>{fLabel} · {isSingle ? "1 court" : `${session.courts} court${session.courts > 1 ? "s" : ""}`} · {session.pointsPerMatch} pts · Waiting for players</div>
             </div>
             <button style={st.btn} onClick={() => router.push("/")}>Home</button>
           </div>
+
           <div style={st.pillsRow}>
             {pill(`${session.players.length} joined`, "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
-            {pill(`${minPlayers} needed to start`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
-            {session.maxPlayers !== null && pill(`${session.maxPlayers} max`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
+            {isSingle
+              ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")
+              : pill(`${minPlayers} needed to start`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
+            {!isSingle && session.maxPlayers !== null && pill(`${session.maxPlayers} max`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
           </div>
+
           {shareCard}
           <div style={st.divider} />
-          <div style={st.sectionLabel}>Players — {session.players.length}{session.maxPlayers !== null ? ` / ${session.maxPlayers}` : ""}</div>
+
+          <div style={st.sectionLabel}>
+            {isTeam ? "Players — paired in join order" : `Players — ${session.players.length}${session.maxPlayers !== null ? ` / ${session.maxPlayers}` : ""}`}
+          </div>
           <div style={st.lobbyCard}>
             {session.players.length === 0 ? (
               <div style={st.hint}>No players yet — share the code above.</div>
+            ) : isTeam && teamPairs.length > 0 ? (
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0,1fr))" }}>
+                {teamPairs.map((tp, i) => (
+                  <div key={i} style={st.teamPairCard}>
+                    <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>T{i + 1}</div>
+                    <div style={{ fontSize: 13, fontWeight: 900 }}>{tp.p1} &amp; {tp.p2}</div>
+                  </div>
+                ))}
+                {session.players.length % 2 !== 0 && (
+                  <div style={{ ...st.teamPairCard, opacity: 0.5 }}>
+                    <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>…</div>
+                    <div style={{ fontSize: 13, fontWeight: 900 }}>{session.players[session.players.length - 1].name} — waiting for partner</div>
+                  </div>
+                )}
+              </div>
             ) : (
               <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
                 {session.players.map((p) => <div key={p.id} style={st.playerPill}>{p.name}</div>)}
               </div>
             )}
           </div>
+
           <div style={st.sectionLabel}>Add player manually</div>
           <div style={st.addRow}>
             <input style={st.addInput} value={addName} placeholder="Player name" maxLength={30}
@@ -429,12 +479,13 @@ export default function OrganiserPage() {
             </button>
           </div>
           {addError && <div style={st.errorBox}>{addError}</div>}
+
           <div style={st.startSection}>
             <div>
               <div style={{ fontWeight: 1000, fontSize: 15 }}>
-                {canStart ? "Ready to start!" : `Need ${minPlayers - session.players.length} more player${minPlayers - session.players.length !== 1 ? "s" : ""}`}
+                {canStart ? "Ready to start!" : startLabel}
               </div>
-              <div style={st.hint}>Locking entries generates the full match queue.</div>
+              <div style={st.hint}>{startHint}</div>
             </div>
             <button style={{ ...st.btnGreen, opacity: canStart && !startLoading ? 1 : 0.4 }} onClick={lockAndStart} disabled={!canStart || startLoading}>
               {startLoading ? "Starting…" : "Lock & Start →"}
@@ -453,6 +504,9 @@ export default function OrganiserPage() {
   const pending = session.matches.filter((m) => m.status === "PENDING");
   const complete = session.matches.filter((m) => m.status === "COMPLETE");
   const courtNumbers = Array.from({ length: session.courts }, (_, i) => i + 1);
+
+  const subtitleParts = [fLabel, `${session.players.length} players`, `${session.courts} court${session.courts > 1 ? "s" : ""}`, `${ppm} pts`];
+  if (session.servesPerRotation && !isSingle) subtitleParts.push(`${session.servesPerRotation} pts/serve`);
 
   const leaderboard: LeaderRow[] = (() => {
     const base = new Map<string, LeaderRow>();
@@ -477,7 +531,7 @@ export default function OrganiserPage() {
         <div style={st.row}>
           <div>
             <div style={st.title}>Organiser · {code}</div>
-            <div style={st.sub}>{session.format} · {session.players.length} players · {session.courts} courts · {ppm} pts</div>
+            <div style={st.sub}>{subtitleParts.join(" · ")}</div>
           </div>
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>
         </div>
@@ -544,28 +598,23 @@ export default function OrganiserPage() {
             const sColor = isConflict ? RED : isConfirmed ? GREEN : isPending ? ORANGE : WARM_WHITE;
             const sLabel = isConflict ? "⚠ Conflict" : isConfirmed ? "✓ Confirmed" : isPending ? "⏳ Awaiting confirmation" : "In play";
 
-            // Score entry state
             const cs = courtScores[m.id] ?? { pA: null };
-            const entryA = cs.pA; // null = untouched
+            const entryA = cs.pA;
             const entryB = entryA !== null ? ppm - entryA : null;
             const canSubmit = entryA !== null && !isPending && !isConfirmed && !isConflict;
             const showEntry = !isPending && !isConfirmed && !isConflict;
 
-            // Confirmed/submitted score to display at top of card
             const displayA = m.pointsA;
             const displayB = m.pointsB;
             const hasSubmittedScore = displayA !== null && displayB !== null;
 
             return (
               <div key={cn} style={{ ...st.courtCard, borderColor: isPending ? "rgba(255,107,0,0.35)" : isConflict ? "rgba(255,64,64,0.35)" : "rgba(255,107,0,0.2)" }}>
-
-                {/* Header */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                   <div style={{ fontWeight: 1000, fontSize: 15, color: ORANGE }}>Court {cn}</div>
                   <span style={{ fontSize: 11, fontWeight: 1000, color: sColor }}>{sLabel}</span>
                 </div>
 
-                {/* Team names + score display (only show if score already submitted) */}
                 {hasSubmittedScore ? (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center", marginBottom: 10 }}>
                     <div>
@@ -585,18 +634,14 @@ export default function OrganiserPage() {
                     </div>
                   </div>
                 ) : (
-                  /* No score yet — just show team names */
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontWeight: 950, fontSize: 13, marginBottom: 4 }}>{a1} & {a2}</div>
                     <div style={{ fontWeight: 950, fontSize: 13 }}>{b1} & {b2}</div>
                   </div>
                 )}
 
-                {/* Score entry — single stepper for Team A, Team B auto-calculates */}
                 {showEntry && (
                   <div style={{ borderRadius: 12, padding: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)" }}>
-
-                    {/* Team A stepper */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                       <div style={{ fontSize: 13, fontWeight: 1000, flex: 1 }}>{a1} & {a2}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -609,20 +654,15 @@ export default function OrganiserPage() {
                           onClick={() => adjustCourtScore(m.id, +1, ppm)} disabled={entryA !== null && entryA >= ppm}>+</button>
                       </div>
                     </div>
-
-                    {/* Team B — auto-calculated */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
                       <div style={{ fontSize: 13, fontWeight: 1000, flex: 1, opacity: 0.7 }}>{b1} & {b2}</div>
                       <div style={{ fontSize: 28, fontWeight: 1150, minWidth: 36, textAlign: "center" as const, color: entryB === null ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.5)", paddingRight: 4 }}>
                         {entryB === null ? "—" : entryB}
                       </div>
                     </div>
-
                     {entryA === null && (
                       <div style={{ fontSize: 12, opacity: 0.45, marginTop: 8, textAlign: "center" as const }}>Tap + to enter {a1} & {a2}'s score</div>
                     )}
-
-                    {/* Submit */}
                     <button
                       style={{ marginTop: 12, width: "100%", borderRadius: 12, padding: "13px 16px", fontSize: 14, fontWeight: 1000, cursor: canSubmit ? "pointer" : "default", border: "none", background: canSubmit ? ORANGE : "rgba(255,255,255,0.1)", color: canSubmit ? WHITE : "rgba(255,255,255,0.3)", transition: "all 0.15s" }}
                       onClick={() => submitCourtScore(m.id, ppm)}
@@ -633,7 +673,6 @@ export default function OrganiserPage() {
                   </div>
                 )}
 
-                {/* Confirm button when player score is awaiting organiser confirm */}
                 {isPending && (
                   <button style={{ ...st.btnConfirm, opacity: confirmLoading === m.id ? 0.5 : 1 }}
                     onClick={() => confirmScore(m.id)} disabled={confirmLoading === m.id}>
@@ -645,8 +684,8 @@ export default function OrganiserPage() {
           })}
         </div>
 
-        {/* Queue */}
-        {pending.length > 0 && (
+        {/* Queue — hidden for SINGLE (only 1 match ever) */}
+        {!isSingle && pending.length > 0 && (
           <>
             <div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>
             {pending.map((m) => {
@@ -671,8 +710,10 @@ export default function OrganiserPage() {
           </>
         )}
 
-        {pending.length === 0 && inProgress.length === 0 && complete.length > 0 && (
-          <div style={{ opacity: 0.55, fontWeight: 900, padding: "16px 0", textAlign: "center" as const }}>All {complete.length} matches complete 🏆</div>
+        {(isSingle ? inProgress.length === 0 && complete.length > 0 : pending.length === 0 && inProgress.length === 0 && complete.length > 0) && (
+          <div style={{ opacity: 0.55, fontWeight: 900, padding: "16px 0", textAlign: "center" as const }}>
+            {isSingle ? "Match complete 🏆" : `All ${complete.length} matches complete 🏆`}
+          </div>
         )}
 
         <div style={st.divider} />
