@@ -12,13 +12,12 @@ const WARM_WHITE = "#F5F5F5";
 type Format = "SINGLE" | "MIXED" | "TEAM";
 type DeuceMode = "star" | "golden" | "traditional";
 
-function serveDistribution(pts: number, spr: number): [number, number, number, number] {
-  const cycle = spr * 4;
-  const full = Math.floor(pts / cycle);
-  const rem = pts % cycle;
-  return [0, 1, 2, 3].map(
-    (i) => full * spr + Math.min(Math.max(rem - i * spr, 0), spr)
-  ) as [number, number, number, number];
+// Correct algorithm: base = floor(pts/4), remainder distributed to last players in serve order
+// e.g. 18pts → A1:4, B1:4, A2:5, B2:5 | 21pts → A1:5, B1:5, A2:5, B2:6 | 20pts → 5,5,5,5
+function serveDistribution(pts: number): [number, number, number, number] {
+  const base = Math.floor(pts / 4);
+  const rem = pts % 4;
+  return [0, 1, 2, 3].map((i) => base + (i >= 4 - rem ? 1 : 0)) as [number, number, number, number];
 }
 
 const DEUCE_OPTIONS: { value: DeuceMode; label: string; desc: string }[] = [
@@ -30,22 +29,16 @@ const DEUCE_OPTIONS: { value: DeuceMode; label: string; desc: string }[] = [
 export default function NewSessionPage() {
   const router = useRouter();
 
-  // Format
   const [format, setFormat] = useState<Format>("MIXED");
-
-  // Americano settings
   const [courts, setCourts] = useState(2);
   const [pointsPerMatch, setPointsPerMatch] = useState(21);
   const [servesPerRotation, setServesPerRotation] = useState(4);
   const [slotMode, setSlotMode] = useState<"open" | "fixed">("open");
   const [maxPlayers, setMaxPlayers] = useState(16);
-
-  // Single match settings
   const [sets, setSets] = useState(3);
   const [deuceMode, setDeuceMode] = useState<DeuceMode>("star");
   const [tiebreak, setTiebreak] = useState(true);
   const [superTiebreak, setSuperTiebreak] = useState(true);
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -53,7 +46,7 @@ export default function NewSessionPage() {
   const effectiveCourts = isSingle ? 1 : courts;
   const minPlayers = isSingle ? 4 : effectiveCourts * 4;
 
-  const dist = useMemo(() => serveDistribution(pointsPerMatch, servesPerRotation), [pointsPerMatch, servesPerRotation]);
+  const dist = useMemo(() => serveDistribution(pointsPerMatch), [pointsPerMatch]);
   const serveHint = useMemo(() => {
     const [a1, b1, a2, b2] = dist;
     if (a1 === b1 && b1 === a2 && a2 === b2)
@@ -86,15 +79,10 @@ export default function NewSessionPage() {
       const data = await r.json();
       if (!r.ok) { setError(data.error ?? "Failed to create session."); setLoading(false); return; }
 
-      // Store tennis rules locally for SINGLE sessions
       if (isSingle) {
         localStorage.setItem(`eps_match_rules_${data.code}`, JSON.stringify({
           sets,
-          rules: {
-            deuceMode,
-            tiebreak,
-            superTiebreak: sets === 1 ? false : superTiebreak,
-          },
+          rules: { deuceMode, tiebreak, superTiebreak: sets === 1 ? false : superTiebreak },
         }));
       }
 
@@ -192,7 +180,6 @@ export default function NewSessionPage() {
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>
         </div>
 
-        {/* Format */}
         <div style={st.sectionLabel}>Format</div>
         <div style={st.formatGrid}>
           <div style={formatCard(format === "SINGLE")} onClick={() => setFormat("SINGLE")}>
@@ -211,7 +198,6 @@ export default function NewSessionPage() {
 
         <div style={st.divider} />
 
-        {/* ── SINGLE: Tennis settings ── */}
         {isSingle && (
           <>
             <div style={st.summaryBar}>
@@ -266,7 +252,6 @@ export default function NewSessionPage() {
           </>
         )}
 
-        {/* ── MIXED / TEAM: Americano settings ── */}
         {!isSingle && (
           <>
             <div style={st.sectionLabel}>Match settings</div>
