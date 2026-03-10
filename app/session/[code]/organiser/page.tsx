@@ -220,6 +220,8 @@ export default function OrganiserPage() {
   const [showQR, setShowQR] = useState(false);
 
   const [addName, setAddName] = useState("");
+  const [addName2, setAddName2] = useState("");
+  const [addTeamName, setAddTeamName] = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState("");
 
@@ -254,12 +256,10 @@ export default function OrganiserPage() {
         if (parsed.isOrganiser && parsed.deviceId) setDeviceId(parsed.deviceId);
       }
     } catch { /* ignore */ }
-    // Load tennis rules for SINGLE
     try {
       const rules = localStorage.getItem(`eps_match_rules_${code}`);
       if (rules) setTennisPayload(JSON.parse(rules));
     } catch { /* ignore */ }
-    // Load persisted tennis state
     try {
       const ts = localStorage.getItem(`eps_tennis_${code}`);
       if (ts) setTennisState(JSON.parse(ts));
@@ -267,13 +267,11 @@ export default function OrganiserPage() {
     setBootstrapped(true);
   }, [code]);
 
-  // Persist tennis state on every change
   useEffect(() => {
     if (!code) return;
     localStorage.setItem(`eps_tennis_${code}`, JSON.stringify(tennisState));
   }, [tennisState, code]);
 
-  // Auto-submit score to DB when tennis match ends
   useEffect(() => {
     if (!tennisState.matchOver || scoreSubmittedRef.current || !deviceId || !session) return;
     const match = session.matches.find((m) => m.status === "IN_PROGRESS" || m.status === "PENDING");
@@ -364,6 +362,26 @@ export default function OrganiserPage() {
     setAddLoading(false);
   }
 
+  async function addTeamPair() {
+    const n1 = addName.trim(); const n2 = addName2.trim();
+    if (!n1 || !n2 || !deviceId) return;
+    setAddLoading(true); setAddError("");
+    try {
+      const r1 = await fetch(`/api/sessions/${code}/players`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, playerName: n1 }),
+      });
+      if (!r1.ok) { const d = await r1.json(); setAddError(d.message ?? "Could not add player 1."); setAddLoading(false); return; }
+      const r2 = await fetch(`/api/sessions/${code}/players`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, playerName: n2 }),
+      });
+      if (!r2.ok) { const d = await r2.json(); setAddError(d.message ?? "Could not add player 2."); setAddLoading(false); return; }
+      setAddName(""); setAddName2(""); setAddTeamName("");
+    } catch { setAddError("Network error."); }
+    setAddLoading(false);
+  }
+
   async function lockAndStart() {
     if (!deviceId) return;
     setStartLoading(true); setStartError("");
@@ -435,7 +453,6 @@ export default function OrganiserPage() {
     });
   }
 
-  // ─── Tennis actions ────────────────────────────────────────────────────────
   function tennisAddPoint(team: TTeam) {
     if (!tennisPayload) return;
     setTennisHistory((h) => [...h, tennisState]);
@@ -511,7 +528,6 @@ export default function OrganiserPage() {
     stepBtn: { width: 44, height: 44, borderRadius: 10, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.09)", color: WHITE, fontSize: 22, fontWeight: 1000, cursor: "pointer", flexShrink: 0 },
     val: { fontSize: 22, fontWeight: 1100, minWidth: 32, textAlign: "center" as const },
     names: { fontWeight: 900, fontSize: 14, lineHeight: 1.4 },
-    pinInput: { width: "100%", background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "14px 12px", fontSize: 20, fontWeight: 900, textAlign: "center" as const, outline: "none", boxSizing: "border-box" as const },
     errorBox: { marginTop: 10, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
     pillsRow: { display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 12 },
     shareCard: { marginTop: 12, borderRadius: 16, padding: 14, background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)" },
@@ -533,7 +549,6 @@ export default function OrganiserPage() {
     lbCenter: { textAlign: "center" as const },
     hint: { fontSize: 12, opacity: 0.55, color: WARM_WHITE, lineHeight: 1.4 },
     teamPairCard: { borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10, alignItems: "center" },
-    // Tennis-specific
     tennisBoard: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 14 },
     tennisBoardGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
     tennisScoreRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 },
@@ -567,7 +582,7 @@ export default function OrganiserPage() {
 
   if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
 
-   if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session…{sessionError && ` — ${sessionError}`}</div></div></div>;
+  if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session…{sessionError && ` — ${sessionError}`}</div></div></div>;
 
   const nameById = session.players.reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
   function names(m: Match) {
@@ -663,9 +678,10 @@ export default function OrganiserPage() {
           <div style={st.pillsRow}>
             {pill(`${session.players.length} joined`, "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
             {isSingle ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)") : pill(`${minPlayers} needed to start`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
-            </div>
+          </div>
           {shareCard}
           <div style={st.divider} />
+
           {isSingle ? (
             <>
               <div style={st.sectionLabel}>Assign teams</div>
@@ -734,16 +750,55 @@ export default function OrganiserPage() {
               </div>
             </>
           )}
-          <div style={st.sectionLabel}>Add player manually</div>
-          <div style={st.addRow}>
-            <input style={st.addInput} value={addName} placeholder="Player name" maxLength={30}
-              onChange={(e) => setAddName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") addPlayerManually(); }} />
-            <button style={{ ...st.btnOrange, opacity: addLoading ? 0.5 : 1 }} onClick={addPlayerManually} disabled={addLoading}>
-              {addLoading ? "Adding…" : "Add"}
-            </button>
-          </div>
+
+          {/* ── Add team / player ── */}
+          <div style={st.sectionLabel}>Add {isTeam ? "team" : "player"} manually</div>
+          {isTeam ? (
+            <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14, display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 1000, opacity: 0.5 }}>Team name (optional)</div>
+              <input
+                style={st.addInput}
+                value={addTeamName}
+                placeholder="e.g. Team Alpha"
+                maxLength={30}
+                onChange={(e) => setAddTeamName(e.target.value)}
+              />
+              <input
+                style={st.addInput}
+                value={addName}
+                placeholder="Player 1 *"
+                maxLength={30}
+                onChange={(e) => setAddName(e.target.value)}
+              />
+              <input
+                style={st.addInput}
+                value={addName2}
+                placeholder="Player 2 *"
+                maxLength={30}
+                onChange={(e) => setAddName2(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addTeamPair(); }}
+              />
+              <button
+                style={{ ...st.btnOrange, opacity: addLoading || !addName.trim() || !addName2.trim() ? 0.5 : 1 }}
+                onClick={addTeamPair}
+                disabled={addLoading || !addName.trim() || !addName2.trim()}
+              >
+                {addLoading ? "Adding…" : "Add team"}
+              </button>
+              <div style={st.hint}>Both player names required. Team name is optional.</div>
+            </div>
+          ) : (
+            <div style={st.addRow}>
+              <input style={st.addInput} value={addName} placeholder="Player name" maxLength={30}
+                onChange={(e) => setAddName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addPlayerManually(); }} />
+              <button style={{ ...st.btnOrange, opacity: addLoading ? 0.5 : 1 }} onClick={addPlayerManually} disabled={addLoading}>
+                {addLoading ? "Adding…" : "Add"}
+              </button>
+            </div>
+          )}
           {addError && <div style={st.errorBox}>{addError}</div>}
+
           <div style={st.startSection}>
             <div>
               <div style={{ fontWeight: 1000, fontSize: 15 }}>{canStart ? "Ready to start!" : startLabel}</div>
@@ -767,15 +822,11 @@ export default function OrganiserPage() {
   const complete = session.matches.filter((m) => m.status === "COMPLETE");
   const courtNumbers = Array.from({ length: session.courts }, (_, i) => i + 1);
 
-  // Subtitle — no pts/serve shown
   const subtitleParts = [fLabel, `${session.players.length} players`, `${session.courts} court${session.courts > 1 ? "s" : ""}`, `${ppm} pts`];
 
   // ── SINGLE ACTIVE: full tennis scorecard ───────────────────────────────────
   if (isSingle) {
     const singleMatch = session.matches[0];
-    const isMatchComplete = singleMatch?.status === "COMPLETE" || singleMatch?.scoreStatus === "CONFIRMED";
-
-    // Get player names from the match
     const a1n = singleMatch ? (nameById[singleMatch.teamAPlayer1] ?? "A1") : "A1";
     const a2n = singleMatch ? (nameById[singleMatch.teamAPlayer2] ?? "A2") : "A2";
     const b1n = singleMatch ? (nameById[singleMatch.teamBPlayer1] ?? "B1") : "B1";
@@ -803,8 +854,6 @@ export default function OrganiserPage() {
     return (
       <div style={st.page}>
         <div style={{ ...st.card, maxWidth: 760 }}>
-
-          {/* Top bar */}
           <div style={{ ...st.row, background: NAVY, borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
             <div>
               <div style={{ fontWeight: 1000, fontSize: 22, letterSpacing: 0.2 }}>{headerTitle}</div>
@@ -823,12 +872,10 @@ export default function OrganiserPage() {
             </div>
           </div>
 
-          {/* Star point banner */}
           {isStarPointMoment && (
             <div style={st.starPointBanner}>★ Star Point — next point wins the game</div>
           )}
 
-          {/* Score board */}
           <div style={st.tennisBoard}>
             <div style={st.tennisBoardGrid}>
               {(["A", "B"] as TTeam[]).map((team) => {
@@ -865,7 +912,6 @@ export default function OrganiserPage() {
             </div>
           </div>
 
-          {/* Winner banner */}
           {tennisState.matchOver && tennisState.winner && (
             <div style={{ ...st.tennisWinnerBanner, marginTop: 12 }}>
               <div style={{ fontSize: 24, fontWeight: 1100, color: ORANGE }}>
@@ -877,7 +923,6 @@ export default function OrganiserPage() {
             </div>
           )}
 
-          {/* Point buttons */}
           {!tennisState.matchOver && (
             <div style={st.tennisControls}>
               <button style={st.tennisBtnA} onClick={() => tennisAddPoint("A")}>Point A</button>
@@ -885,20 +930,17 @@ export default function OrganiserPage() {
             </div>
           )}
 
-          {/* Action row */}
           <div style={st.tennisActionRow}>
             <button style={{ ...st.tennisSmallBtn, opacity: tennisHistory.length === 0 ? 0.4 : 1 }} onClick={tennisUndo} disabled={tennisHistory.length === 0}>Undo</button>
             <button style={st.tennisSmallBtn} onClick={tennisReset}>Reset</button>
             <button style={st.btn} onClick={() => router.push("/")}>Home</button>
           </div>
 
-          {/* Footer */}
           <div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, textAlign: "center" as const, paddingTop: 10, lineHeight: 1.5 }}>
             First to {targetSets} set{targetSets > 1 ? "s" : ""} wins · {deuceLabel}
             {tp.rules.tiebreak ? " · Tiebreak at 6-6" : ""}
             {tp.rules.superTiebreak && tp.sets > 1 ? " · Super tiebreak final set" : ""}
           </div>
-
         </div>
       </div>
     );
@@ -916,7 +958,6 @@ export default function OrganiserPage() {
     return Array.from(base.values()).map((r) => ({ ...r, diff: r.pointsFor - r.pointsAgainst })).sort((a, b) => b.diff !== a.diff ? b.diff - a.diff : b.pointsFor !== a.pointsFor ? b.pointsFor - a.pointsFor : a.name.localeCompare(b.name));
   })();
 
-  // Serve rotation reminder for Mixed/Team
   const spr = session.servesPerRotation;
   const serveReminderText = spr
     ? `Serve rotation: A1 → B1 → A2 → B2 · ${spr} point${spr > 1 ? "s" : ""} each`
@@ -941,7 +982,6 @@ export default function OrganiserPage() {
         </div>
         {complete.length > 0 && <div style={{ ...st.hint, marginTop: 6 }}>Tap <strong style={{ color: GREEN }}>{complete.length} done</strong> to view and edit confirmed match scores.</div>}
 
-        {/* Serve rotation reminder */}
         {serveReminderText && (
           <div style={st.serveReminder}>
             🎾 {serveReminderText}
@@ -950,7 +990,6 @@ export default function OrganiserPage() {
 
         <div style={st.divider} />
 
-        {/* Conflicts */}
         {conflicts.length > 0 && (
           <>
             <div style={st.sectionLabel}>⚠ Conflicts — enter correct score</div>
@@ -982,7 +1021,6 @@ export default function OrganiserPage() {
           </>
         )}
 
-        {/* Courts */}
         <div style={st.sectionLabel}>Courts</div>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: session.courts >= 2 ? "repeat(2, minmax(0,1fr))" : "1fr" }}>
           {courtNumbers.map((cn) => {
@@ -1058,7 +1096,6 @@ export default function OrganiserPage() {
           })}
         </div>
 
-        {/* Queue */}
         {pending.length > 0 && (
           <>
             <div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>
@@ -1087,7 +1124,6 @@ export default function OrganiserPage() {
 
         <div style={st.divider} />
 
-        {/* Leaderboard */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const }}>Leaderboard</div>
           {complete.length > 0 && (
