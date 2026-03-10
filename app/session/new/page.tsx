@@ -10,6 +10,7 @@ const ORANGE = "#FF6B00";
 const WARM_WHITE = "#F5F5F5";
 
 type Format = "SINGLE" | "MIXED" | "TEAM";
+type DeuceMode = "star" | "golden" | "traditional";
 
 function serveDistribution(pts: number, spr: number): [number, number, number, number] {
   const cycle = spr * 4;
@@ -20,14 +21,31 @@ function serveDistribution(pts: number, spr: number): [number, number, number, n
   ) as [number, number, number, number];
 }
 
+const DEUCE_OPTIONS: { value: DeuceMode; label: string; desc: string }[] = [
+  { value: "star", label: "Star Point", desc: "Two advantages, then deciding point (FIP 2026)" },
+  { value: "golden", label: "Golden Point", desc: "Deciding point immediately at first deuce" },
+  { value: "traditional", label: "Traditional", desc: "Unlimited advantage until 2-point lead" },
+];
+
 export default function NewSessionPage() {
   const router = useRouter();
+
+  // Format
   const [format, setFormat] = useState<Format>("MIXED");
+
+  // Americano settings
   const [courts, setCourts] = useState(2);
   const [pointsPerMatch, setPointsPerMatch] = useState(21);
   const [servesPerRotation, setServesPerRotation] = useState(4);
   const [slotMode, setSlotMode] = useState<"open" | "fixed">("open");
   const [maxPlayers, setMaxPlayers] = useState(16);
+
+  // Single match settings
+  const [sets, setSets] = useState(3);
+  const [deuceMode, setDeuceMode] = useState<DeuceMode>("star");
+  const [tiebreak, setTiebreak] = useState(true);
+  const [superTiebreak, setSuperTiebreak] = useState(true);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,19 +53,20 @@ export default function NewSessionPage() {
   const effectiveCourts = isSingle ? 1 : courts;
   const minPlayers = isSingle ? 4 : effectiveCourts * 4;
 
-  const dist = useMemo(
-    () => serveDistribution(pointsPerMatch, servesPerRotation),
-    [pointsPerMatch, servesPerRotation]
-  );
+  const dist = useMemo(() => serveDistribution(pointsPerMatch, servesPerRotation), [pointsPerMatch, servesPerRotation]);
   const serveHint = useMemo(() => {
     const [a1, b1, a2, b2] = dist;
     if (a1 === b1 && b1 === a2 && a2 === b2)
       return { even: true, text: `✓ Equal serves — each player serves ${a1} pts` };
-    return {
-      even: false,
-      text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts`,
-    };
+    return { even: false, text: `A1: ${a1} pts · B1: ${b1} pts · A2: ${a2} pts · B2: ${b2} pts` };
   }, [dist]);
+
+  const singleSummary = useMemo(() => {
+    const deuce = DEUCE_OPTIONS.find((d) => d.value === deuceMode)?.label ?? "Star Point";
+    const tb = tiebreak ? "Tiebreak at 6-6" : "No tiebreak";
+    const st = sets > 1 && superTiebreak ? "Super tiebreak final set" : null;
+    return [sets === 1 ? "1 set" : `Best of ${sets}`, deuce, tb, st].filter(Boolean).join(" · ");
+  }, [sets, deuceMode, tiebreak, superTiebreak]);
 
   async function createSession() {
     setLoading(true);
@@ -59,20 +78,24 @@ export default function NewSessionPage() {
         body: JSON.stringify({
           format,
           courts: effectiveCourts,
-          pointsPerMatch,
+          pointsPerMatch: isSingle ? 0 : pointsPerMatch,
           servesPerRotation: isSingle ? null : servesPerRotation,
-          maxPlayers: isSingle
-            ? 4
-            : slotMode === "fixed"
-            ? Math.max(maxPlayers, minPlayers)
-            : null,
+          maxPlayers: isSingle ? 4 : slotMode === "fixed" ? Math.max(maxPlayers, minPlayers) : null,
         }),
       });
       const data = await r.json();
-      if (!r.ok) {
-        setError(data.error ?? "Failed to create session.");
-        setLoading(false);
-        return;
+      if (!r.ok) { setError(data.error ?? "Failed to create session."); setLoading(false); return; }
+
+      // Store tennis rules locally for SINGLE sessions
+      if (isSingle) {
+        localStorage.setItem(`eps_match_rules_${data.code}`, JSON.stringify({
+          sets,
+          rules: {
+            deuceMode,
+            tiebreak,
+            superTiebreak: sets === 1 ? false : superTiebreak,
+          },
+        }));
       }
 
       const dr = await fetch(`/api/sessions/${data.code}/devices`, {
@@ -81,16 +104,9 @@ export default function NewSessionPage() {
         body: JSON.stringify({ organiserPin: data.organiserPin }),
       });
       const ddata = await dr.json();
-      if (!dr.ok) {
-        setError(ddata.error ?? "Failed to register device.");
-        setLoading(false);
-        return;
-      }
+      if (!dr.ok) { setError(ddata.error ?? "Failed to register device."); setLoading(false); return; }
 
-      localStorage.setItem(
-        `eps_join_${data.code}`,
-        JSON.stringify({ deviceId: ddata.deviceId, isOrganiser: true })
-      );
+      localStorage.setItem(`eps_join_${data.code}`, JSON.stringify({ deviceId: ddata.deviceId, isOrganiser: true }));
       localStorage.setItem(`eps_pin_${data.code}`, data.organiserPin);
 
       router.push(`/session/${data.code}/organiser`);
@@ -102,7 +118,7 @@ export default function NewSessionPage() {
 
   const st: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
-    card: { width: "100%", maxWidth: 520, background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 20, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", marginTop: 24 },
+    card: { width: "100%", maxWidth: 520, background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 20, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", marginTop: 24, marginBottom: 32 },
     titleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
     title: { fontSize: 22, fontWeight: 1000 },
     sub: { fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4, lineHeight: 1.35 },
@@ -124,6 +140,12 @@ export default function NewSessionPage() {
     serveRow: { display: "flex", gap: 10, flexWrap: "wrap" as const },
     hintEven: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(0,200,100,0.08)", border: "1px solid rgba(0,200,100,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
     hintOdd: { marginTop: 8, borderRadius: 12, padding: "10px 14px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.28)", fontSize: 12, fontWeight: 900, color: WHITE },
+    summaryBar: { marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.18)", fontSize: 12, fontWeight: 900, color: WARM_WHITE },
+    pillRow: { display: "flex", gap: 8 },
+    deuceGrid: { display: "grid", gap: 8 },
+    toggle: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 14, padding: "12px 14px" },
+    toggleLabel: { fontWeight: 900, fontSize: 14 },
+    toggleDesc: { fontSize: 12, opacity: 0.5, color: WARM_WHITE, marginTop: 3 },
   };
 
   const formatCard = (active: boolean): React.CSSProperties => ({
@@ -143,6 +165,19 @@ export default function NewSessionPage() {
     border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
     background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.06)",
     color: active ? WHITE : WARM_WHITE, whiteSpace: "nowrap" as const,
+  });
+
+  const pillStyle = (active: boolean): React.CSSProperties => ({
+    padding: "13px 14px", borderRadius: 14, cursor: "pointer", fontWeight: active ? 1000 : 900, flex: 1,
+    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.12)",
+    background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.05)",
+    color: active ? WHITE : WARM_WHITE, textAlign: "center" as const, fontSize: 14,
+  });
+
+  const deuceCardStyle = (active: boolean): React.CSSProperties => ({
+    borderRadius: 14, padding: "12px 14px", cursor: "pointer", display: "grid", gap: 3,
+    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.10)",
+    background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)",
   });
 
   return (
@@ -176,39 +211,87 @@ export default function NewSessionPage() {
 
         <div style={st.divider} />
 
-        {/* Match settings */}
-        <div style={st.sectionLabel}>Match settings</div>
-        <div style={st.settingsGrid}>
-          {/* Courts — hidden for SINGLE */}
-          {!isSingle && (
-            <div style={st.settingBox}>
-              <div style={st.settingLabel}>Courts</div>
-              <div style={st.stepper}>
-                <button style={st.stepBtn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
-                <div style={st.stepVal}>{courts}</div>
-                <button style={st.stepBtn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
+        {/* ── SINGLE: Tennis settings ── */}
+        {isSingle && (
+          <>
+            <div style={st.summaryBar}>
+              {sets === 1 ? "1 set" : `Best of ${sets}`} · {singleSummary.split(" · ").slice(1).join(" · ")}
+            </div>
+
+            <div style={st.sectionLabel}>Number of sets</div>
+            <div style={st.pillRow}>
+              {[1, 3, 5].map((n) => (
+                <div key={n} style={pillStyle(sets === n)} onClick={() => setSets(n)}>
+                  {n === 1 ? "1 set" : `Best of ${n}`}
+                </div>
+              ))}
+            </div>
+
+            <div style={st.divider} />
+
+            <div style={st.sectionLabel}>Deuce rule</div>
+            <div style={st.deuceGrid}>
+              {DEUCE_OPTIONS.map((opt) => (
+                <div key={opt.value} style={deuceCardStyle(deuceMode === opt.value)} onClick={() => setDeuceMode(opt.value)}>
+                  <div style={{ fontSize: 14, fontWeight: 1000 }}>{opt.label}</div>
+                  <div style={{ fontSize: 12, opacity: 0.55, color: WARM_WHITE }}>{opt.desc}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={st.divider} />
+
+            <div style={st.sectionLabel}>Tiebreak rules</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={st.toggle}>
+                <div>
+                  <div style={st.toggleLabel}>Tiebreak at 6-6</div>
+                  <div style={st.toggleDesc}>First to 7 points, win by 2</div>
+                </div>
+                <input type="checkbox" checked={tiebreak} onChange={(e) => setTiebreak(e.target.checked)}
+                  style={{ transform: "scale(1.4)", accentColor: ORANGE }} />
+              </div>
+              <div style={{ ...st.toggle, opacity: sets === 1 ? 0.45 : 1 }}>
+                <div>
+                  <div style={st.toggleLabel}>Super tiebreak — final set</div>
+                  <div style={st.toggleDesc}>{sets === 1 ? "Not applicable for 1 set matches" : "Final set replaced by first to 10, win by 2"}</div>
+                </div>
+                <input type="checkbox" checked={sets === 1 ? false : superTiebreak}
+                  onChange={(e) => setSuperTiebreak(e.target.checked)} disabled={sets === 1}
+                  style={{ transform: "scale(1.4)", accentColor: ORANGE }} />
               </div>
             </div>
-          )}
-          <div style={st.settingBox}>
-            <div style={st.settingLabel}>Points per match</div>
-            <div style={st.stepper}>
-              <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.max(8, p - 1))}>−</button>
-              <div style={st.stepVal}>{pointsPerMatch}</div>
-              <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.min(99, p + 1))}>+</button>
-            </div>
-          </div>
-        </div>
-        <div style={st.small}>
-          {isSingle
-            ? "1 court · exactly 4 players"
-            : `Minimum ${minPlayers} players needed to start (${courts} court${courts > 1 ? "s" : ""} × 4)`}
-        </div>
 
-        {/* Serves per rotation — MIXED and TEAM only */}
+            <div style={st.hint}>Share the session code with all 4 players. They join at /join and link their device for scoring.</div>
+          </>
+        )}
+
+        {/* ── MIXED / TEAM: Americano settings ── */}
         {!isSingle && (
           <>
+            <div style={st.sectionLabel}>Match settings</div>
+            <div style={st.settingsGrid}>
+              <div style={st.settingBox}>
+                <div style={st.settingLabel}>Courts</div>
+                <div style={st.stepper}>
+                  <button style={st.stepBtn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
+                  <div style={st.stepVal}>{courts}</div>
+                  <button style={st.stepBtn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
+                </div>
+              </div>
+              <div style={st.settingBox}>
+                <div style={st.settingLabel}>Points per match</div>
+                <div style={st.stepper}>
+                  <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.max(8, p - 1))}>−</button>
+                  <div style={st.stepVal}>{pointsPerMatch}</div>
+                  <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.min(99, p + 1))}>+</button>
+                </div>
+              </div>
+            </div>
+            <div style={st.small}>Minimum {minPlayers} players needed to start ({courts} court{courts > 1 ? "s" : ""} × 4)</div>
+
             <div style={st.divider} />
+
             <div style={st.sectionLabel}>Serves before rotation</div>
             <div style={st.serveRow}>
               {[2, 4].map((n) => (
@@ -218,32 +301,21 @@ export default function NewSessionPage() {
               ))}
             </div>
             <div style={serveHint.even ? st.hintEven : st.hintOdd}>{serveHint.text}</div>
-            <div style={st.small}>
-              Serve order per match: A1 → B1 → A2 → B2, cycling every {servesPerRotation} pts.
-            </div>
-          </>
-        )}
+            <div style={st.small}>Serve order per match: A1 → B1 → A2 → B2, cycling every {servesPerRotation} pts.</div>
 
-        {/* Player slots — hidden for SINGLE (always 4) */}
-        {!isSingle && (
-          <>
             <div style={st.divider} />
+
             <div style={st.sectionLabel}>Player slots</div>
             <div style={st.slotGrid}>
               <div style={slotCard(slotMode === "open")} onClick={() => setSlotMode("open")}>
                 <div style={{ fontWeight: 1000, fontSize: 14 }}>Open</div>
-                <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4, lineHeight: 1.35 }}>
-                  Anyone with the code can join until you lock entries
-                </div>
+                <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4, lineHeight: 1.35 }}>Anyone with the code can join until you lock entries</div>
               </div>
               <div style={slotCard(slotMode === "fixed")} onClick={() => setSlotMode("fixed")}>
                 <div style={{ fontWeight: 1000, fontSize: 14 }}>Fixed slots</div>
-                <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4, lineHeight: 1.35 }}>
-                  First come first served — closes when full
-                </div>
+                <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4, lineHeight: 1.35 }}>First come first served — closes when full</div>
               </div>
             </div>
-
             {slotMode === "fixed" && (
               <div style={{ ...st.settingBox, marginTop: 10 }}>
                 <div style={st.settingLabel}>Max players</div>
@@ -255,20 +327,11 @@ export default function NewSessionPage() {
                 <div style={{ ...st.small, marginTop: 8 }}>Min {minPlayers} · Max 64</div>
               </div>
             )}
+            <div style={st.hint}>Players join at /join using the session code. You can also add them manually from the organiser view.</div>
           </>
         )}
 
-        <div style={st.hint}>
-          {isSingle
-            ? "Share the session code with all 4 players. They join at /join and link their device for scoring."
-            : "Players join at /join using the session code. You can also add them manually from the organiser view."}
-        </div>
-
-        <button
-          style={{ ...st.btnPrimary, opacity: loading ? 0.5 : 1 }}
-          onClick={createSession}
-          disabled={loading}
-        >
+        <button style={{ ...st.btnPrimary, opacity: loading ? 0.5 : 1 }} onClick={createSession} disabled={loading}>
           {loading ? "Creating…" : "Create Session"}
         </button>
         {error && <div style={st.errorBox}>{error}</div>}
