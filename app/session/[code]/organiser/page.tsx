@@ -211,9 +211,6 @@ export default function OrganiserPage() {
   const router = useRouter();
 
   const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [pinInput, setPinInput] = useState("");
-  const [pinError, setPinError] = useState("");
-  const [pinLoading, setPinLoading] = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
 
   const [session, setSession] = useState<Session | null>(null);
@@ -349,22 +346,6 @@ export default function OrganiserPage() {
       if (prev.teamB.length < 2) return { ...prev, teamB: [...prev.teamB, playerId] };
       return prev;
     });
-  }
-
-  async function claimOrganiser() {
-    if (!pinInput.trim()) { setPinError("Enter the organiser PIN."); return; }
-    setPinLoading(true); setPinError("");
-    try {
-      const r = await fetch(`/api/sessions/${code}/devices`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organiserPin: pinInput.trim() }),
-      });
-      const data = await r.json();
-      if (!r.ok || !data.isOrganiser) { setPinError("Incorrect PIN."); setPinLoading(false); return; }
-      localStorage.setItem(`eps_join_${code}`, JSON.stringify({ deviceId: data.deviceId, isOrganiser: true }));
-      setDeviceId(data.deviceId);
-    } catch { setPinError("Network error."); }
-    setPinLoading(false);
   }
 
   async function addPlayerManually() {
@@ -586,26 +567,7 @@ export default function OrganiserPage() {
 
   if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
 
-  if (!deviceId) {
-    return (
-      <div style={st.page}>
-        <div style={{ ...st.card, maxWidth: 420, marginTop: 60 }}>
-          <button style={st.btn} onClick={() => router.push("/")}>← Back</button>
-          <div style={{ ...st.title, marginTop: 14 }}>Organiser Access</div>
-          <div style={{ ...st.sub, marginBottom: 20 }}>Enter the organiser PIN for session <strong style={{ color: ORANGE }}>{code}</strong>.</div>
-          <input style={st.pinInput} value={pinInput} type="password" placeholder="PIN" maxLength={8} autoFocus
-            onChange={(e) => setPinInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") claimOrganiser(); }} />
-          <button style={{ ...st.btnOrange, width: "100%", marginTop: 14, padding: 16, fontSize: 15, opacity: pinLoading ? 0.5 : 1 }}
-            onClick={claimOrganiser} disabled={pinLoading}>
-            {pinLoading ? "Verifying…" : "Access organiser view"}
-          </button>
-          {pinError && <div style={st.errorBox}>{pinError}</div>}
-        </div>
-      </div>
-    );
-  }
-
-  if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session…{sessionError && ` — ${sessionError}`}</div></div></div>;
+   if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session…{sessionError && ` — ${sessionError}`}</div></div></div>;
 
   const nameById = session.players.reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
   function names(m: Match) {
@@ -701,8 +663,7 @@ export default function OrganiserPage() {
           <div style={st.pillsRow}>
             {pill(`${session.players.length} joined`, "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
             {isSingle ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)") : pill(`${minPlayers} needed to start`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
-            {!isSingle && session.maxPlayers !== null && pill(`${session.maxPlayers} max`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
-          </div>
+            </div>
           {shareCard}
           <div style={st.divider} />
           {isSingle ? (
