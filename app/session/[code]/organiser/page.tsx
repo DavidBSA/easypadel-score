@@ -79,6 +79,9 @@ export default function OrganiserPage() {
   const [startLoading, setStartLoading] = useState(false);
   const [startError, setStartError] = useState("");
 
+  // SINGLE format team assignment: { teamA: [id, id], teamB: [id, id] }
+  const [singleAssignment, setSingleAssignment] = useState<{ teamA: string[]; teamB: string[] }>({ teamA: [], teamB: [] });
+
   const [resolving, setResolving] = useState<Record<string, { pA: number; pB: number }>>({});
   const [resolveLoading, setResolveLoading] = useState<string | null>(null);
   const [confirmLoading, setConfirmLoading] = useState<string | null>(null);
@@ -121,6 +124,14 @@ export default function OrganiserPage() {
       }
       return next;
     });
+    // Clean up singleAssignment if players have been removed
+    if (data.format === "SINGLE") {
+      const validIds = new Set(data.players.map((p) => p.id));
+      setSingleAssignment((prev) => ({
+        teamA: prev.teamA.filter((id) => validIds.has(id)),
+        teamB: prev.teamB.filter((id) => validIds.has(id)),
+      }));
+    }
   }, []);
 
   useEffect(() => {
@@ -144,6 +155,19 @@ export default function OrganiserPage() {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     };
   }, [deviceId, code, applySession]);
+
+  // Tap unassigned → assign to next open slot; tap assigned → remove
+  function toggleSingleAssign(playerId: string) {
+    setSingleAssignment((prev) => {
+      const inA = prev.teamA.includes(playerId);
+      const inB = prev.teamB.includes(playerId);
+      if (inA) return { ...prev, teamA: prev.teamA.filter((id) => id !== playerId) };
+      if (inB) return { ...prev, teamB: prev.teamB.filter((id) => id !== playerId) };
+      if (prev.teamA.length < 2) return { ...prev, teamA: [...prev.teamA, playerId] };
+      if (prev.teamB.length < 2) return { ...prev, teamB: [...prev.teamB, playerId] };
+      return prev; // both full
+    });
+  }
 
   async function claimOrganiser() {
     if (!pinInput.trim()) { setPinError("Enter the organiser PIN."); return; }
@@ -181,9 +205,15 @@ export default function OrganiserPage() {
     if (!deviceId) return;
     setStartLoading(true); setStartError("");
     try {
+      const isSingleFormat = session?.format === "SINGLE";
+      const body: Record<string, unknown> = { deviceId };
+      if (isSingleFormat) {
+        body.teamA = singleAssignment.teamA;
+        body.teamB = singleAssignment.teamB;
+      }
       const r = await fetch(`/api/sessions/${code}/start`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId }),
+        body: JSON.stringify(body),
       });
       const data = await r.json();
       if (!r.ok) { setStartError(data.error ?? "Could not start session."); setStartLoading(false); return; }
@@ -356,7 +386,9 @@ export default function OrganiserPage() {
   const isSingle = session.format === "SINGLE";
   const isTeam = session.format === "TEAM";
   const minPlayers = isSingle ? 4 : session.courts * 4;
-  const canStart = isSingle ? session.players.length === 4 : session.players.length >= minPlayers;
+  const canStart = isSingle
+    ? singleAssignment.teamA.length === 2 && singleAssignment.teamB.length === 2
+    : session.players.length >= minPlayers;
   const canWebShare = typeof navigator !== "undefined" && !!navigator.share;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getJoinUrl())}&bgcolor=0D1B2A&color=FFFFFF&margin=10`;
   const fLabel = formatLabel(session.format);
@@ -405,8 +437,13 @@ export default function OrganiserPage() {
       }
     }
 
+    // SINGLE: unassigned players pool
+    const assignedIds = new Set([...singleAssignment.teamA, ...singleAssignment.teamB]);
+    const unassigned = session.players.filter((p) => !assignedIds.has(p.id));
+    const bothTeamsFull = singleAssignment.teamA.length === 2 && singleAssignment.teamB.length === 2;
+
     const startHint = isSingle
-      ? "Exactly 4 players required. Match starts immediately."
+      ? "Assign 2 players to each team, then lock to start."
       : isTeam
       ? "Players are paired in join order (1st+2nd, 3rd+4th…). Locking entries generates the full match queue."
       : "Locking entries generates the full match queue.";
@@ -416,8 +453,26 @@ export default function OrganiserPage() {
       : startLoading
       ? "Starting…"
       : isSingle
-      ? `Need ${4 - session.players.length} more player${4 - session.players.length !== 1 ? "s" : ""}`
+      ? `Assign all 4 players to teams`
       : `Need ${minPlayers - session.players.length} more player${minPlayers - session.players.length !== 1 ? "s" : ""}`;
+
+    // Slot chip style
+    const slotStyle = (filled: boolean): React.CSSProperties => ({
+      borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 900,
+      background: filled ? "rgba(255,107,0,0.14)" : "rgba(255,255,255,0.03)",
+      border: filled ? "1px solid rgba(255,107,0,0.40)" : "1px dashed rgba(255,255,255,0.18)",
+      color: filled ? WHITE : "rgba(255,255,255,0.25)",
+      cursor: filled ? "pointer" : "default",
+      minHeight: 42, display: "flex", alignItems: "center",
+    });
+
+    const unassignedChipStyle = (disabled: boolean): React.CSSProperties => ({
+      borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 900,
+      background: disabled ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.14)",
+      color: disabled ? "rgba(255,255,255,0.3)" : WHITE,
+      cursor: disabled ? "default" : "pointer",
+    });
 
     return (
       <div style={st.page}>
@@ -441,33 +496,98 @@ export default function OrganiserPage() {
           {shareCard}
           <div style={st.divider} />
 
-          <div style={st.sectionLabel}>
-            {isTeam ? "Players — paired in join order" : `Players — ${session.players.length}${session.maxPlayers !== null ? ` / ${session.maxPlayers}` : ""}`}
-          </div>
-          <div style={st.lobbyCard}>
-            {session.players.length === 0 ? (
-              <div style={st.hint}>No players yet — share the code above.</div>
-            ) : isTeam && teamPairs.length > 0 ? (
-              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0,1fr))" }}>
-                {teamPairs.map((tp, i) => (
-                  <div key={i} style={st.teamPairCard}>
-                    <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>T{i + 1}</div>
-                    <div style={{ fontSize: 13, fontWeight: 900 }}>{tp.p1} &amp; {tp.p2}</div>
+          {/* ── SINGLE: Team builder ── */}
+          {isSingle ? (
+            <>
+              <div style={st.sectionLabel}>Assign teams</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                {/* Team A */}
+                <div style={{ borderRadius: 14, padding: 14, background: "rgba(255,107,0,0.06)", border: "1px solid rgba(255,107,0,0.22)" }}>
+                  <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, marginBottom: 10, letterSpacing: 0.5 }}>TEAM A</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {[0, 1].map((slot) => {
+                      const pid = singleAssignment.teamA[slot];
+                      const name = pid ? nameById[pid] : null;
+                      return (
+                        <div key={slot} style={slotStyle(!!name)} onClick={() => pid && toggleSingleAssign(pid)}>
+                          {name ?? `Player ${slot + 1}`}
+                          {name && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✕</span>}
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
-                {session.players.length % 2 !== 0 && (
-                  <div style={{ ...st.teamPairCard, opacity: 0.5 }}>
-                    <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>…</div>
-                    <div style={{ fontSize: 13, fontWeight: 900 }}>{session.players[session.players.length - 1].name} — waiting for partner</div>
+                </div>
+                {/* Team B */}
+                <div style={{ borderRadius: 14, padding: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}>
+                  <div style={{ fontSize: 12, fontWeight: 1000, color: WARM_WHITE, marginBottom: 10, letterSpacing: 0.5 }}>TEAM B</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {[0, 1].map((slot) => {
+                      const pid = singleAssignment.teamB[slot];
+                      const name = pid ? nameById[pid] : null;
+                      return (
+                        <div key={slot} style={slotStyle(!!name)} onClick={() => pid && toggleSingleAssign(pid)}>
+                          {name ?? `Player ${slot + 1}`}
+                          {name && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✕</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Unassigned pool */}
+              {session.players.length === 0 ? (
+                <div style={{ ...st.hint, marginTop: 12 }}>No players yet — share the code above.</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.4, textTransform: "uppercase" as const, letterSpacing: 1.2, marginTop: 14, marginBottom: 8 }}>
+                    {unassigned.length > 0 ? `Unassigned — tap to assign` : bothTeamsFull ? "✓ All players assigned" : "Waiting for more players…"}
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
+                    {unassigned.map((p) => {
+                      const full = singleAssignment.teamA.length === 2 && singleAssignment.teamB.length === 2;
+                      return (
+                        <div key={p.id} style={unassignedChipStyle(full)} onClick={() => !full && toggleSingleAssign(p.id)}>
+                          {p.name}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            /* ── MIXED / TEAM: existing player list ── */
+            <>
+              <div style={st.sectionLabel}>
+                {isTeam ? "Players — paired in join order" : `Players — ${session.players.length}${session.maxPlayers !== null ? ` / ${session.maxPlayers}` : ""}`}
+              </div>
+              <div style={st.lobbyCard}>
+                {session.players.length === 0 ? (
+                  <div style={st.hint}>No players yet — share the code above.</div>
+                ) : isTeam && teamPairs.length > 0 ? (
+                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0,1fr))" }}>
+                    {teamPairs.map((tp, i) => (
+                      <div key={i} style={st.teamPairCard}>
+                        <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>T{i + 1}</div>
+                        <div style={{ fontSize: 13, fontWeight: 900 }}>{tp.p1} &amp; {tp.p2}</div>
+                      </div>
+                    ))}
+                    {session.players.length % 2 !== 0 && (
+                      <div style={{ ...st.teamPairCard, opacity: 0.5 }}>
+                        <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>…</div>
+                        <div style={{ fontSize: 13, fontWeight: 900 }}>{session.players[session.players.length - 1].name} — waiting for partner</div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
+                    {session.players.map((p) => <div key={p.id} style={st.playerPill}>{p.name}</div>)}
                   </div>
                 )}
               </div>
-            ) : (
-              <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
-                {session.players.map((p) => <div key={p.id} style={st.playerPill}>{p.name}</div>)}
-              </div>
-            )}
-          </div>
+            </>
+          )}
 
           <div style={st.sectionLabel}>Add player manually</div>
           <div style={st.addRow}>
@@ -684,7 +804,7 @@ export default function OrganiserPage() {
           })}
         </div>
 
-        {/* Queue — hidden for SINGLE (only 1 match ever) */}
+        {/* Queue — hidden for SINGLE */}
         {!isSingle && pending.length > 0 && (
           <>
             <div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>
