@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../../../lib/prisma";
 
-// After a match completes on a given court, find the next PENDING match
-// where all 4 players are free (not currently IN_PROGRESS on another court).
-// Assigns it to the freed court. Skips matches with busy players.
 async function autoAssignNextMatch(sessionId: string, freedCourt: number) {
-  // Get all players currently IN_PROGRESS on other courts
   const activeMatches = await prisma.match.findMany({
     where: { sessionId, status: "IN_PROGRESS" },
   });
@@ -18,13 +14,11 @@ async function autoAssignNextMatch(sessionId: string, freedCourt: number) {
     busyPlayerIds.add(m.teamBPlayer2);
   }
 
-  // Find all pending matches in queue order
   const pendingMatches = await prisma.match.findMany({
     where: { sessionId, status: "PENDING" },
     orderBy: { queuePosition: "asc" },
   });
 
-  // Find first match where all 4 players are free
   const eligible = pendingMatches.find(
     (m) =>
       !busyPlayerIds.has(m.teamAPlayer1) &&
@@ -33,16 +27,12 @@ async function autoAssignNextMatch(sessionId: string, freedCourt: number) {
       !busyPlayerIds.has(m.teamBPlayer2)
   );
 
-  if (!eligible) return; // No eligible match — court stays open
+  if (!eligible) return;
 
   await prisma.$transaction([
     prisma.match.update({
       where: { id: eligible.id },
-      data: {
-        status: "IN_PROGRESS",
-        courtNumber: freedCourt,
-        startedAt: new Date(),
-      },
+      data: { status: "IN_PROGRESS", courtNumber: freedCourt, startedAt: new Date() },
     }),
     prisma.session.update({
       where: { id: sessionId },
@@ -76,7 +66,7 @@ export async function POST(
       return NextResponse.json({ error: "Match not found" }, { status: 404 });
     }
 
-    // ── Organiser confirm (lock PENDING score as-is) ──────────────────────────
+    // ── Organiser confirm ─────────────────────────────────────────────────────
     if (isOrganiserConfirm) {
       const device = await prisma.device.findUnique({ where: { id: deviceId } });
       if (!device?.isOrganiser) {
@@ -89,9 +79,7 @@ export async function POST(
         }),
         prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
-      if (match.courtNumber) {
-        await autoAssignNextMatch(match.sessionId, match.courtNumber);
-      }
+      if (match.courtNumber) await autoAssignNextMatch(match.sessionId, match.courtNumber);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
@@ -108,71 +96,78 @@ export async function POST(
         }),
         prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
-      if (match.courtNumber) {
-        await autoAssignNextMatch(match.sessionId, match.courtNumber);
-      }
+      if (match.courtNumber) await autoAssignNextMatch(match.sessionId, match.courtNumber);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
     // ── Player submission ─────────────────────────────────────────────────────
+
+    // Store or update this player's submission
     await prisma.scoreSubmission.upsert({
       where: { matchId_deviceId: { matchId: id, deviceId } },
       create: { matchId: id, deviceId, pointsA, pointsB },
       update: { pointsA, pointsB, submittedAt: new Date() },
     });
 
-    const submissions = await prisma.scoreSubmission.findMany({ where: { matchId: id } });
+    // Re-fetch submissions after upsert to get the current full picture
+    const allSubmissions = await prisma.scoreSubmission.findMany({
+      where: { matchId: id },
+    });
 
-    // First submission — store score, wait for organiser confirm or second submission
-    if (submissions.length < 2) {
-      const [updated] = await prisma.$transaction([
+    // Only one submission so far — mark PENDING, wait for second
+    if (allSubmissions.length < 2) {
+      await prisma.$transaction([
         prisma.match.update({
           where: { id },
-          data: { pointsA, pointsB, scoreStatus: "PENDING" },
+          data: { scoreStatus: "PENDING" },
         }),
-        prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
+        prisma.session.update({
+          where: { id: match.sessionId },
+          data: { updatedAt: new Date() },
+        }),
       ]);
-      return NextResponse.json({ match: updated, result: "PENDING" });
+      return NextResponse.json({ result: "PENDING" });
     }
 
-    // Two submissions — check agreement
-    const [s1, s2] = submissions;
-    const agree = s1.pointsA === s2.pointsA && s1.pointsB === s2.pointsB;
+    // Two or more submissions — check if they agree
+    const [first, second] = allSubmissions;
+    const scoresAgree = first.pointsA === second.pointsA && first.pointsB === second.pointsB;
 
-    if (agree) {
+    if (scoresAgree) {
+      // Confirmed — complete the match and auto-assign next
       const [updated] = await prisma.$transaction([
         prisma.match.update({
           where: { id },
           data: {
-            pointsA: s1.pointsA,
-            pointsB: s1.pointsB,
+            pointsA: first.pointsA,
+            pointsB: first.pointsB,
             scoreStatus: "CONFIRMED",
             status: "COMPLETE",
             completedAt: new Date(),
           },
         }),
-        prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
+        prisma.session.update({
+          where: { id: match.sessionId },
+          data: { updatedAt: new Date() },
+        }),
       ]);
-      if (match.courtNumber) {
-        await autoAssignNextMatch(match.sessionId, match.courtNumber);
-      }
+      if (match.courtNumber) await autoAssignNextMatch(match.sessionId, match.courtNumber);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     } else {
-      const [updated] = await prisma.$transaction([
+      // Conflict — flag for organiser to resolve
+      await prisma.$transaction([
         prisma.match.update({
           where: { id },
           data: { scoreStatus: "CONFLICT" },
         }),
-        prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
+        prisma.session.update({
+          where: { id: match.sessionId },
+          data: { updatedAt: new Date() },
+        }),
       ]);
-      return NextResponse.json({
-        match: updated,
-        result: "CONFLICT",
-        submissions: submissions.map((s: { deviceId: string; pointsA: number; pointsB: number }) => ({
-          deviceId: s.deviceId, pointsA: s.pointsA, pointsB: s.pointsB,
-        })),
-      });
+      return NextResponse.json({ result: "CONFLICT" });
     }
+
   } catch (err) {
     console.error("POST /api/matches/[id]/score error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

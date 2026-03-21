@@ -39,7 +39,7 @@ export async function POST(
         {
           error: isSingle
             ? "Single match requires exactly 4 players."
-            : `Need at least ${minPlayers} players for ${session.courts} court${session.courts > 1 ? "s" : ""}.`,
+            : "Need at least " + minPlayers + " players for " + session.courts + " court" + (session.courts > 1 ? "s" : "") + ".",
         },
         { status: 400 }
       );
@@ -52,7 +52,6 @@ export async function POST(
       );
     }
 
-    // Validate explicit SINGLE team assignment if provided
     if (isSingle && (teamA || teamB)) {
       const validIds = new Set(session.players.map((p) => p.id));
       const provided: string[] = [...(teamA ?? []), ...(teamB ?? [])];
@@ -78,7 +77,6 @@ export async function POST(
     }[];
 
     if (isSingle) {
-      // Use explicit assignment if provided, otherwise fall back to join order
       const useExplicit = Array.isArray(teamA) && teamA.length === 2 &&
                           Array.isArray(teamB) && teamB.length === 2;
       if (useExplicit) {
@@ -100,18 +98,46 @@ export async function POST(
         }];
       }
     } else if (isTeam) {
-      const teams: QueueTeam[] = [];
-      for (let i = 0; i + 1 < session.players.length; i += 2) {
-        const p1 = session.players[i];
-        const p2 = session.players[i + 1];
-        teams.push({
-          id: `${p1.id}_${p2.id}`,
+      // Build fixed team pairs using partnerName links first (set during join),
+      // then fall back to join-order pairing for any unlinked players.
+      const players = [...session.players];
+      const used = new Set<string>();
+      const teamPairs: QueueTeam[] = [];
+
+      // Pass 1: resolve explicit partner links
+      for (const p of players) {
+        if (used.has(p.id)) continue;
+        if (p.partnerName) {
+          const partner = players.find(
+            (q) => q.id === p.partnerName && !used.has(q.id)
+          );
+          if (partner) {
+            teamPairs.push({
+              id: p.id + "_" + partner.id,
+              player1Id: p.id,
+              player2Id: partner.id,
+              isActive: true,
+            });
+            used.add(p.id);
+            used.add(partner.id);
+          }
+        }
+      }
+
+      // Pass 2: pair remaining unlinked players by join order
+      const remaining = players.filter((p) => !used.has(p.id));
+      for (let i = 0; i + 1 < remaining.length; i += 2) {
+        const p1 = remaining[i];
+        const p2 = remaining[i + 1];
+        teamPairs.push({
+          id: p1.id + "_" + p2.id,
           player1Id: p1.id,
           player2Id: p2.id,
           isActive: true,
         });
       }
-      queueMatches = generateTeamMatchQueue(teams, session.courts);
+
+      queueMatches = generateTeamMatchQueue(teamPairs, session.courts);
     } else {
       // MIXED
       queueMatches = generateMatchQueue(
@@ -144,7 +170,7 @@ export async function POST(
     });
 
     const courtsToFill = isSingle ? 1 : session.courts;
-    const autoAssign = createdMatches.slice(0, courtsToFill);
+    const autoAssign   = createdMatches.slice(0, courtsToFill);
 
     await prisma.$transaction([
       ...autoAssign.map((m, idx) =>

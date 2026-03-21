@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const BLACK = "#000000";
@@ -27,6 +27,7 @@ const DEUCE_OPTIONS: { value: DeuceMode; label: string; desc: string }[] = [
 export default function NewSessionPage() {
   const router = useRouter();
 
+  const [isMobile, setIsMobile] = useState(false);
   const [format, setFormat] = useState<Format>("MIXED");
   const [courts, setCourts] = useState(2);
   const [pointsPerMatch, setPointsPerMatch] = useState(21);
@@ -39,13 +40,19 @@ export default function NewSessionPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 600);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
   const isSingle = format === "SINGLE";
   const isTeam = format === "TEAM";
   const effectiveCourts = isSingle ? 1 : courts;
   const minPlayers = isSingle ? 4 : effectiveCourts * 4;
   const minTeams = effectiveCourts * 2;
 
-  // For API: maxPlayers is always in individual players
   const maxPlayersForAPI = isTeam ? maxTeams * 2 : maxTeams;
   const minSlotsForAPI = isTeam ? minTeams : minPlayers;
 
@@ -56,7 +63,7 @@ export default function NewSessionPage() {
     const deuce = DEUCE_OPTIONS.find((d) => d.value === deuceMode)?.label ?? "Star Point";
     const tb = tiebreak ? "Tiebreak at 6-6" : "No tiebreak";
     const st = sets > 1 && superTiebreak ? "Super tiebreak final set" : null;
-    return [sets === 1 ? "1 set" : `Best of ${sets}`, deuce, tb, st].filter(Boolean).join(" · ");
+    return [sets === 1 ? "1 set" : "Best of " + sets, deuce, tb, st].filter(Boolean).join(" · ");
   }, [sets, deuceMode, tiebreak, superTiebreak]);
 
   async function createSession() {
@@ -78,13 +85,13 @@ export default function NewSessionPage() {
       if (!r.ok) { setError(data.error ?? "Failed to create session."); setLoading(false); return; }
 
       if (isSingle) {
-        localStorage.setItem(`eps_match_rules_${data.code}`, JSON.stringify({
+        localStorage.setItem("eps_match_rules_" + data.code, JSON.stringify({
           sets,
           rules: { deuceMode, tiebreak, superTiebreak: sets === 1 ? false : superTiebreak },
         }));
       }
 
-      const dr = await fetch(`/api/sessions/${data.code}/devices`, {
+      const dr = await fetch("/api/sessions/" + data.code + "/devices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ organiserPin: data.organiserPin }),
@@ -92,10 +99,10 @@ export default function NewSessionPage() {
       const ddata = await dr.json();
       if (!dr.ok) { setError(ddata.error ?? "Failed to register device."); setLoading(false); return; }
 
-      localStorage.setItem(`eps_join_${data.code}`, JSON.stringify({ deviceId: ddata.deviceId, isOrganiser: true }));
-      localStorage.setItem(`eps_pin_${data.code}`, data.organiserPin);
+      localStorage.setItem("eps_join_" + data.code, JSON.stringify({ deviceId: ddata.deviceId, isOrganiser: true }));
+      localStorage.setItem("eps_pin_" + data.code, data.organiserPin);
 
-      router.push(`/session/${data.code}/organiser`);
+      router.push("/session/" + data.code + "/organiser");
     } catch {
       setError("Network error.");
       setLoading(false);
@@ -112,14 +119,15 @@ export default function NewSessionPage() {
     divider: { height: 1, background: "rgba(255,255,255,0.07)", margin: "18px 0" },
     btn: { borderRadius: 14, padding: "12px 14px", fontSize: 14, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
     btnPrimary: { width: "100%", borderRadius: 14, padding: 16, fontSize: 16, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, marginTop: 20 },
-    formatGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 },
-    settingsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+    formatGrid: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 10 },
+    settingsGrid: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 },
     settingBox: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14 },
     settingLabel: { fontSize: 12, opacity: 0.55, fontWeight: 900, marginBottom: 10 },
     stepper: { display: "flex", alignItems: "center", gap: 14 },
+    // ── Swapped: + on left, − on right ──────────────────────────────────────
     stepBtn: { width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, fontSize: 20, fontWeight: 1000, cursor: "pointer" },
     stepVal: { fontSize: 22, fontWeight: 1100, minWidth: 36, textAlign: "center" as const },
-    slotGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+    slotGrid: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 },
     small: { fontSize: 12, opacity: 0.45, marginTop: 6, lineHeight: 1.35 },
     errorBox: { marginTop: 12, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
     hint: { fontSize: 12, opacity: 0.55, marginTop: 10, lineHeight: 1.45, color: WARM_WHITE },
@@ -129,31 +137,37 @@ export default function NewSessionPage() {
     toggle: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 14, padding: "12px 14px" },
     toggleLabel: { fontWeight: 900, fontSize: 14 },
     toggleDesc: { fontSize: 12, opacity: 0.5, color: WARM_WHITE, marginTop: 3 },
-    serveCard: { borderRadius: 14, padding: "14px 16px", background: "rgba(255,107,0,0.10)", border: `1px solid rgba(255,107,0,0.35)`, display: "grid", gap: 6 },
+    serveCard: { borderRadius: 14, padding: "14px 16px", background: "rgba(255,107,0,0.10)", border: "1px solid rgba(255,107,0,0.35)", display: "grid", gap: 6 },
   };
 
   const formatCard = (active: boolean): React.CSSProperties => ({
-    borderRadius: 14, padding: "14px 12px", cursor: "pointer", fontWeight: 1000,
-    border: `1px solid ${active ? "rgba(255,107,0,0.55)" : "rgba(255,255,255,0.08)"}`,
+    borderRadius: 14,
+    padding: isMobile ? "12px 14px" : "14px 12px",
+    cursor: "pointer", fontWeight: 1000,
+    border: "1px solid " + (active ? "rgba(255,107,0,0.55)" : "rgba(255,255,255,0.08)"),
     background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)",
+    display: "flex",
+    flexDirection: isMobile ? "row" as const : "column" as const,
+    alignItems: isMobile ? "center" as const : "flex-start" as const,
+    gap: isMobile ? 10 : 0,
   });
 
   const slotCard = (active: boolean): React.CSSProperties => ({
     borderRadius: 14, padding: 14, cursor: "pointer",
-    border: `1px solid ${active ? "rgba(255,107,0,0.55)" : "rgba(255,255,255,0.08)"}`,
+    border: "1px solid " + (active ? "rgba(255,107,0,0.55)" : "rgba(255,255,255,0.08)"),
     background: active ? "rgba(255,107,0,0.08)" : "rgba(255,255,255,0.04)",
   });
 
   const pillStyle = (active: boolean): React.CSSProperties => ({
     padding: "13px 14px", borderRadius: 14, cursor: "pointer", fontWeight: active ? 1000 : 900, flex: 1,
-    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.12)",
+    border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.12)",
     background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.05)",
     color: active ? WHITE : WARM_WHITE, textAlign: "center" as const, fontSize: 14,
   });
 
   const deuceCardStyle = (active: boolean): React.CSSProperties => ({
     borderRadius: 14, padding: "12px 14px", cursor: "pointer", display: "grid", gap: 3,
-    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.10)",
+    border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.10)",
     background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)",
   });
 
@@ -175,32 +189,31 @@ export default function NewSessionPage() {
         <div style={st.formatGrid}>
           <div style={formatCard(format === "SINGLE")} onClick={() => setFormat("SINGLE")}>
             <div style={{ fontSize: 14 }}>Single Match</div>
-            <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>1 court · 4 players</div>
+            <div style={{ fontSize: 11, opacity: 0.55, marginTop: isMobile ? 0 : 4 }}>1 court · 4 players</div>
           </div>
           <div style={formatCard(format === "MIXED")} onClick={() => setFormat("MIXED")}>
             <div style={{ fontSize: 14 }}>Mixed Americano</div>
-            <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>Rotating partners</div>
+            <div style={{ fontSize: 11, opacity: 0.55, marginTop: isMobile ? 0 : 4 }}>Rotating partners</div>
           </div>
           <div style={formatCard(format === "TEAM")} onClick={() => setFormat("TEAM")}>
             <div style={{ fontSize: 14 }}>Team Americano</div>
-            <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>Fixed partners</div>
+            <div style={{ fontSize: 11, opacity: 0.55, marginTop: isMobile ? 0 : 4 }}>Fixed partners</div>
           </div>
         </div>
 
         <div style={st.divider} />
 
-        {/* ── SINGLE: Tennis settings ── */}
         {isSingle && (
           <>
             <div style={st.summaryBar}>
-              {sets === 1 ? "1 set" : `Best of ${sets}`} · {singleSummary.split(" · ").slice(1).join(" · ")}
+              {sets === 1 ? "1 set" : "Best of " + sets} · {singleSummary.split(" · ").slice(1).join(" · ")}
             </div>
 
             <div style={st.sectionLabel}>Number of sets</div>
             <div style={st.pillRow}>
               {[1, 3, 5].map((n) => (
                 <div key={n} style={pillStyle(sets === n)} onClick={() => setSets(n)}>
-                  {n === 1 ? "1 set" : `Best of ${n}`}
+                  {n === 1 ? "1 set" : "Best of " + n}
                 </div>
               ))}
             </div>
@@ -244,32 +257,32 @@ export default function NewSessionPage() {
           </>
         )}
 
-        {/* ── MIXED / TEAM: Americano settings ── */}
         {!isSingle && (
           <>
             <div style={st.sectionLabel}>Match settings</div>
             <div style={st.settingsGrid}>
               <div style={st.settingBox}>
                 <div style={st.settingLabel}>Courts</div>
+                {/* ── + on left, − on right ── */}
                 <div style={st.stepper}>
-                  <button style={st.stepBtn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
-                  <div style={st.stepVal}>{courts}</div>
                   <button style={st.stepBtn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
+                  <div style={st.stepVal}>{courts}</div>
+                  <button style={st.stepBtn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
                 </div>
               </div>
               <div style={st.settingBox}>
                 <div style={st.settingLabel}>Points per match</div>
                 <div style={st.stepper}>
-                  <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.max(8, p - 1))}>−</button>
-                  <div style={st.stepVal}>{pointsPerMatch}</div>
                   <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.min(99, p + 1))}>+</button>
+                  <div style={st.stepVal}>{pointsPerMatch}</div>
+                  <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.max(8, p - 1))}>−</button>
                 </div>
               </div>
             </div>
             <div style={st.small}>
               {isTeam
-                ? `Minimum ${minTeams} teams needed to start (${courts} court${courts > 1 ? "s" : ""} × 2)`
-                : `Minimum ${minPlayers} players needed to start (${courts} court${courts > 1 ? "s" : ""} × 4)`}
+                ? "Minimum " + minTeams + " teams needed to start (" + courts + " court" + (courts > 1 ? "s" : "") + " × 2)"
+                : "Minimum " + minPlayers + " players needed to start (" + courts + " court" + (courts > 1 ? "s" : "") + " × 4)"}
             </div>
 
             <div style={st.divider} />
@@ -281,8 +294,8 @@ export default function NewSessionPage() {
               </div>
               <div style={{ fontSize: 13, fontWeight: 900, color: WHITE }}>
                 {serveIsEven
-                  ? `✓ Equal serves — each player serves ${dist[0]} pts`
-                  : `A1: ${dist[0]} pts · B1: ${dist[1]} pts · A2: ${dist[2]} pts · B2: ${dist[3]} pts`}
+                  ? "Equal serves — each player serves " + dist[0] + " pts"
+                  : "A1: " + dist[0] + " pts · B1: " + dist[1] + " pts · A2: " + dist[2] + " pts · B2: " + dist[3] + " pts"}
               </div>
             </div>
             <div style={st.small}>Totals adjust automatically with points per match.</div>
@@ -304,9 +317,9 @@ export default function NewSessionPage() {
               <div style={{ ...st.settingBox, marginTop: 10 }}>
                 <div style={st.settingLabel}>{isTeam ? "Max teams" : "Max players"}</div>
                 <div style={st.stepper}>
-                  <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.max(isTeam ? minTeams : minPlayers, n - 1))}>−</button>
-                  <div style={st.stepVal}>{effectiveMaxTeams}</div>
                   <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.min(isTeam ? 32 : 64, n + 1))}>+</button>
+                  <div style={st.stepVal}>{effectiveMaxTeams}</div>
+                  <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.max(isTeam ? minTeams : minPlayers, n - 1))}>−</button>
                 </div>
                 <div style={{ ...st.small, marginTop: 8 }}>
                   Min {isTeam ? minTeams : minPlayers} · Max {isTeam ? 32 : 64}

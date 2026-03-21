@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState, startTransition } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 const BLACK = "#000000";
@@ -11,7 +11,22 @@ const WARM_WHITE = "#F5F5F5";
 const GREEN = "#00C851";
 const RED = "#FF4040";
 
-// ─── Tennis scoring types (mirrors app/match/page.tsx) ───────────────────────
+// ── Contacts library ──────────────────────────────────────────────────────────
+const CONTACTS_KEY = "eps_contacts";
+function loadContacts(): string[] {
+  try { const r = localStorage.getItem(CONTACTS_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
+}
+function saveContacts(list: string[]) {
+  try { localStorage.setItem(CONTACTS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+}
+function addToContacts(name: string, current: string[]): string[] {
+  if (!name.trim()) return current;
+  if (current.some((c) => c.toLowerCase() === name.toLowerCase())) return current;
+  const updated = [...current, name.trim()];
+  saveContacts(updated);
+  return updated;
+}
+
 type DeuceMode = "star" | "golden" | "traditional";
 type MatchRules = { deuceMode: DeuceMode; tiebreak: boolean; superTiebreak: boolean };
 type TennisPayload = { sets: number; rules: MatchRules };
@@ -39,7 +54,12 @@ const T0: TSnap = {
   matchOver: false, winner: null,
 };
 
-// ─── Tennis helpers ───────────────────────────────────────────────────────────
+const DEUCE_OPTIONS: { value: DeuceMode; label: string; desc: string }[] = [
+  { value: "star",        label: "Star Point",   desc: "Two advantages, then deciding point (FIP 2026)" },
+  { value: "golden",      label: "Golden Point", desc: "Deciding point immediately at deuce" },
+  { value: "traditional", label: "Traditional",  desc: "Unlimited advantage until 2-point lead" },
+];
+
 function setsToWin(n: number) { return Math.ceil(n / 2); }
 function isFinalSet(idx: number, total: number) { return idx === total - 1; }
 function shouldUseSuperTB(tp: TennisPayload, idx: number) {
@@ -62,16 +82,13 @@ function checkMatchWinner(s: TSnap, tp: TennisPayload): TSnap {
   if (s.setsB >= needed) return { ...s, matchOver: true, winner: "B" };
   return s;
 }
-
 function startTiebreak(s: TSnap, target: number): TSnap {
   return { ...s, isTiebreak: true, tiebreakTarget: target, tbA: 0, tbB: 0, tbPointNumber: 0, tbServingTeam: s.servingTeam, tbPointsLeftInTurn: 1, pA: 0, pB: 0, adTeam: null, deuceCount: 0 };
 }
-
 function rotateServeAfterGame(s: TSnap): TSnap {
   if (s.servingTeam === "A") return { ...s, nextServerA: tog(s.nextServerA), servingTeam: "B" };
   return { ...s, nextServerB: tog(s.nextServerB), servingTeam: "A" };
 }
-
 function rotateServeAfterTBPoint(s: TSnap): TSnap {
   const rem = s.tbPointsLeftInTurn - 1;
   if (rem > 0) return { ...s, tbPointsLeftInTurn: rem };
@@ -81,7 +98,6 @@ function rotateServeAfterTBPoint(s: TSnap): TSnap {
   else n.nextServerB = tog(n.nextServerB);
   return n;
 }
-
 function winGame(s: TSnap, w: TTeam, tp: TennisPayload): TSnap {
   let n: TSnap = { ...s };
   if (w === "A") n.gamesA += 1; else n.gamesB += 1;
@@ -102,7 +118,6 @@ function winGame(s: TSnap, w: TTeam, tp: TennisPayload): TSnap {
   }
   return n;
 }
-
 function winTBAsSet(s: TSnap, w: TTeam, tp: TennisPayload): TSnap {
   let n: TSnap = { ...s };
   if (w === "A") n.setsA += 1; else n.setsB += 1;
@@ -113,7 +128,6 @@ function winTBAsSet(s: TSnap, w: TTeam, tp: TennisPayload): TSnap {
   if (!n.matchOver && shouldUseSuperTB(tp, n.setIndex)) n = startTiebreak(n, 10);
   return n;
 }
-
 function addTennisPoint(prev: TSnap, team: TTeam, tp: TennisPayload): TSnap {
   if (prev.matchOver) return prev;
   if (prev.isTiebreak) {
@@ -131,8 +145,7 @@ function addTennisPoint(prev: TSnap, team: TTeam, tp: TennisPayload): TSnap {
     if (mode === "star") {
       if (prev.adTeam === null) return { ...prev, adTeam: team };
       if (prev.adTeam === team) return winGame(prev, team, tp);
-      const dc = prev.deuceCount + 1;
-      return { ...prev, adTeam: null, deuceCount: dc };
+      return { ...prev, adTeam: null, deuceCount: prev.deuceCount + 1 };
     }
     if (prev.adTeam === null) return { ...prev, adTeam: team };
     if (prev.adTeam === team) return winGame(prev, team, tp);
@@ -148,7 +161,6 @@ function addTennisPoint(prev: TSnap, team: TTeam, tp: TennisPayload): TSnap {
   }
   return n;
 }
-
 function getScoreDisplay(s: TSnap): { a: string; b: string } {
   if (s.isTiebreak) return { a: String(s.tbA), b: String(s.tbB) };
   const map = ["0", "15", "30", "40"];
@@ -160,7 +172,6 @@ function getScoreDisplay(s: TSnap): { a: string; b: string } {
   return { a: map[clamp(s.pA, 0, 3)], b: map[clamp(s.pB, 0, 3)] };
 }
 
-// ─── Session types ────────────────────────────────────────────────────────────
 type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number; submittedAt: string };
 type Match = {
@@ -185,7 +196,8 @@ type LeaderRow = {
   played: number; wins: number; draws: number; losses: number;
   pointsFor: number; pointsAgainst: number; diff: number;
 };
-type CourtScore = { pA: number | null };
+
+type CourtScore = { rawA: string };
 
 function formatLabel(f: "SINGLE" | "MIXED" | "TEAM"): string {
   if (f === "SINGLE") return "Single Match";
@@ -197,11 +209,102 @@ function pill(label: string, bg: string, border: string, onClick?: () => void): 
   return (
     <span onClick={onClick} style={{
       display: "inline-block", borderRadius: 999, padding: "4px 10px",
-      fontSize: 11, fontWeight: 1000, background: bg, border: `1px solid ${border}`, color: WHITE,
+      fontSize: 11, fontWeight: 1000, background: bg, border: "1px solid " + border, color: WHITE,
       cursor: onClick ? "pointer" : "default",
     }}>
       {label}
     </span>
+  );
+}
+
+// ── Autocomplete dropdown ─────────────────────────────────────────────────────
+function AutocompleteDropdown({
+  value, contacts, sessionNames, onSelect,
+}: {
+  value: string;
+  contacts: string[];
+  sessionNames: Set<string>;
+  onSelect: (name: string) => void;
+}) {
+  const q = value.trim().toLowerCase();
+  if (!q) return null;
+  const matches = contacts.filter((c) => c.toLowerCase().includes(q));
+  if (matches.length === 0) return null;
+  return (
+    <div style={{
+      position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
+      marginTop: 4, borderRadius: 12, background: "#0D1B2A",
+      border: "1px solid rgba(255,255,255,0.18)", overflow: "hidden",
+      boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+    }}>
+      {matches.map((name) => {
+        const inSession = sessionNames.has(name.toLowerCase());
+        return (
+          <div
+            key={name}
+            onMouseDown={(e) => { e.preventDefault(); if (!inSession) onSelect(name); }}
+            style={{
+              padding: "10px 14px", fontSize: 14, fontWeight: 900,
+              cursor: inSession ? "default" : "pointer",
+              opacity: inSession ? 0.35 : 1,
+              color: WHITE,
+              borderBottom: "1px solid rgba(255,255,255,0.06)",
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+            }}
+          >
+            <span>{name}</span>
+            {inSession && <span style={{ fontSize: 11, color: ORANGE }}>already added</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Name input with autocomplete — STABLE top-level component ─────────────────
+function NameInput({
+  value, onChange, placeholder, fieldKey, acFocus, setAcFocus,
+  contacts, sessionNameSet, onSubmit,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  fieldKey: "name1" | "name2";
+  acFocus: "name1" | "name2" | null;
+  setAcFocus: (v: "name1" | "name2" | null) => void;
+  contacts: string[];
+  sessionNameSet: Set<string>;
+  onSubmit?: () => void;
+}) {
+  return (
+    <div style={{ position: "relative" as const, flex: 1, minWidth: 0 }}>
+      <input
+        style={{
+          width: "100%", background: "rgba(255,255,255,0.07)", color: WHITE,
+          border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12,
+          padding: "12px 14px", fontSize: 15, fontWeight: 900, outline: "none",
+          boxSizing: "border-box" as const,
+        }}
+        value={value}
+        placeholder={placeholder}
+        maxLength={30}
+        onChange={(e) => { onChange(e.target.value); setAcFocus(fieldKey); }}
+        onFocus={() => setAcFocus(fieldKey)}
+        onBlur={() => setTimeout(() => setAcFocus(null), 150)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && onSubmit) onSubmit();
+          if (e.key === "Escape") setAcFocus(null);
+        }}
+      />
+      {acFocus === fieldKey && (
+        <AutocompleteDropdown
+          value={value}
+          contacts={contacts}
+          sessionNames={sessionNameSet}
+          onSelect={(name) => { onChange(name); setAcFocus(null); }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -210,14 +313,17 @@ export default function OrganiserPage() {
   const code = (Array.isArray(params?.code) ? params.code[0] : params?.code ?? "") as string;
   const router = useRouter();
 
+  const [isMobile, setIsMobile] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
-
   const [session, setSession] = useState<Session | null>(null);
   const [sessionError, setSessionError] = useState("");
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "shared">("idle");
   const [shareQRStatus, setShareQRStatus] = useState<"idle" | "loading" | "shared" | "copied">("idle");
   const [showQR, setShowQR] = useState(false);
+
+  const [contacts, setContacts] = useState<string[]>([]);
+  const [acFocus, setAcFocus] = useState<"name1" | "name2" | null>(null);
 
   const [addName, setAddName] = useState("");
   const [addName2, setAddName2] = useState("");
@@ -230,46 +336,63 @@ export default function OrganiserPage() {
 
   const [singleAssignment, setSingleAssignment] = useState<{ teamA: string[]; teamB: string[] }>({ teamA: [], teamB: [] });
 
-  const [resolving, setResolving] = useState<Record<string, { pA: number; pB: number }>>({});
-  const [resolveLoading, setResolveLoading] = useState<string | null>(null);
-  const [confirmLoading, setConfirmLoading] = useState<string | null>(null);
-
   const [courtScores, setCourtScores] = useState<Record<string, CourtScore>>({});
   const [submitLoading, setSubmitLoading] = useState<string | null>(null);
 
-  // ─── Tennis scoring state (SINGLE format) ─────────────────────────────────
   const [tennisState, setTennisState] = useState<TSnap>(T0);
   const [tennisHistory, setTennisHistory] = useState<TSnap[]>([]);
   const [showServeHelper, setShowServeHelper] = useState(true);
   const [tennisPayload, setTennisPayload] = useState<TennisPayload | null>(null);
   const scoreSubmittedRef = useRef(false);
 
+  const [showSettings, setShowSettings] = useState(false);
+  const [editSets, setEditSets] = useState(1);
+  const [editDeuceMode, setEditDeuceMode] = useState<DeuceMode>("star");
+  const [editTiebreak, setEditTiebreak] = useState(true);
+  const [editSuperTiebreak, setEditSuperTiebreak] = useState(true);
+
+  const [endConfirm, setEndConfirm] = useState(false);
+  const [endLoading, setEndLoading] = useState(false);
+  const [endError, setEndError] = useState("");
+
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 600);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  useEffect(() => {
     if (!code) return;
     try {
-      const stored = localStorage.getItem(`eps_join_${code}`);
+      const stored = localStorage.getItem("eps_join_" + code);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed.isOrganiser && parsed.deviceId) setDeviceId(parsed.deviceId);
       }
     } catch { /* ignore */ }
     try {
-      const rules = localStorage.getItem(`eps_match_rules_${code}`);
-      if (rules) setTennisPayload(JSON.parse(rules));
+      const rules = localStorage.getItem("eps_match_rules_" + code);
+      if (rules) {
+        const parsed = JSON.parse(rules) as TennisPayload;
+        setTennisPayload(parsed);
+        setEditSets(parsed.sets);
+        setEditDeuceMode(parsed.rules.deuceMode);
+        setEditTiebreak(parsed.rules.tiebreak);
+        setEditSuperTiebreak(parsed.rules.superTiebreak);
+      }
     } catch { /* ignore */ }
-    try {
-      const ts = localStorage.getItem(`eps_tennis_${code}`);
-      if (ts) setTennisState(JSON.parse(ts));
-    } catch { /* ignore */ }
+    try { const ts = localStorage.getItem("eps_tennis_" + code); if (ts) setTennisState(JSON.parse(ts)); } catch { /* ignore */ }
+    setContacts(loadContacts());
     setBootstrapped(true);
   }, [code]);
 
   useEffect(() => {
     if (!code) return;
-    localStorage.setItem(`eps_tennis_${code}`, JSON.stringify(tennisState));
+    localStorage.setItem("eps_tennis_" + code, JSON.stringify(tennisState));
   }, [tennisState, code]);
 
   useEffect(() => {
@@ -277,7 +400,7 @@ export default function OrganiserPage() {
     const match = session.matches.find((m) => m.status === "IN_PROGRESS" || m.status === "PENDING");
     if (!match) return;
     scoreSubmittedRef.current = true;
-    fetch(`/api/matches/${match.id}/score`, {
+    fetch("/api/matches/" + match.id + "/score", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ deviceId, pointsA: tennisState.setsA, pointsB: tennisState.setsB, isOrganiserOverride: true }),
     }).catch(() => { scoreSubmittedRef.current = false; });
@@ -285,21 +408,10 @@ export default function OrganiserPage() {
 
   const applySession = useCallback((data: Session) => {
     setSession(data);
-    setResolving((prev) => {
-      const next = { ...prev };
-      for (const m of data.matches) {
-        if (m.scoreStatus === "CONFLICT" && !(m.id in next)) {
-          next[m.id] = { pA: m.pointsA ?? 0, pB: m.pointsB ?? 0 };
-        }
-      }
-      return next;
-    });
     setCourtScores((prev) => {
       const next = { ...prev };
       for (const m of data.matches) {
-        if (m.status === "IN_PROGRESS" && !(m.id in next)) {
-          next[m.id] = { pA: null };
-        }
+        if (m.status === "IN_PROGRESS" && !(m.id in next)) next[m.id] = { rawA: "" };
       }
       return next;
     });
@@ -314,17 +426,24 @@ export default function OrganiserPage() {
 
   useEffect(() => {
     if (!deviceId || !code) return;
-    fetch(`/api/sessions/${code}`)
-      .then((r) => r.json()).then(applySession)
+    fetch("/api/sessions/" + code)
+      .then((r) => r.json())
+      .then((data) => startTransition(() => applySession(data)))
       .catch(() => setSessionError("Failed to load session."));
-    const es = new EventSource(`/api/sessions/${code}/stream`);
+
+    const es = new EventSource("/api/sessions/" + code + "/stream");
     esRef.current = es;
-    es.onmessage = (e) => { try { applySession(JSON.parse(e.data)); } catch { /* ignore */ } };
+    es.onmessage = (e) => {
+      try { const data = JSON.parse(e.data); startTransition(() => applySession(data)); } catch { /* ignore */ }
+    };
     es.onerror = () => {
       es.close();
       if (!pollRef.current) {
         pollRef.current = setInterval(() => {
-          fetch(`/api/sessions/${code}`).then((r) => r.json()).then(applySession).catch(() => { });
+          fetch("/api/sessions/" + code)
+            .then((r) => r.json())
+            .then((data) => startTransition(() => applySession(data)))
+            .catch(() => { });
         }, 3000);
       }
     };
@@ -334,10 +453,28 @@ export default function OrganiserPage() {
     };
   }, [deviceId, code, applySession]);
 
+  function openSettings() {
+    const tp = tennisPayload ?? { sets: 1, rules: { deuceMode: "traditional" as DeuceMode, tiebreak: true, superTiebreak: false } };
+    setEditSets(tp.sets);
+    setEditDeuceMode(tp.rules.deuceMode);
+    setEditTiebreak(tp.rules.tiebreak);
+    setEditSuperTiebreak(tp.rules.superTiebreak);
+    setShowSettings(true);
+  }
+
+  function saveSettings() {
+    const next: TennisPayload = {
+      sets: editSets,
+      rules: { deuceMode: editDeuceMode, tiebreak: editTiebreak, superTiebreak: editSets === 1 ? false : editSuperTiebreak },
+    };
+    setTennisPayload(next);
+    localStorage.setItem("eps_match_rules_" + code, JSON.stringify(next));
+    setShowSettings(false);
+  }
+
   function toggleSingleAssign(playerId: string) {
     setSingleAssignment((prev) => {
-      const inA = prev.teamA.includes(playerId);
-      const inB = prev.teamB.includes(playerId);
+      const inA = prev.teamA.includes(playerId); const inB = prev.teamB.includes(playerId);
       if (inA) return { ...prev, teamA: prev.teamA.filter((id) => id !== playerId) };
       if (inB) return { ...prev, teamB: prev.teamB.filter((id) => id !== playerId) };
       if (prev.teamA.length < 2) return { ...prev, teamA: [...prev.teamA, playerId] };
@@ -349,15 +486,16 @@ export default function OrganiserPage() {
   async function addPlayerManually() {
     const name = addName.trim();
     if (!name || !deviceId) return;
-    setAddLoading(true); setAddError("");
+    setAddLoading(true); setAddError(""); setAcFocus(null);
     try {
-      const r = await fetch(`/api/sessions/${code}/players`, {
+      const r = await fetch("/api/sessions/" + code + "/players", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, playerName: name }),
       });
       const data = await r.json();
       if (!r.ok) { setAddError(data.message ?? data.error ?? "Could not add player."); setAddLoading(false); return; }
       setAddName("");
+      setContacts((prev) => addToContacts(name, prev));
     } catch { setAddError("Network error."); }
     setAddLoading(false);
   }
@@ -365,19 +503,20 @@ export default function OrganiserPage() {
   async function addTeamPair() {
     const n1 = addName.trim(); const n2 = addName2.trim();
     if (!n1 || !n2 || !deviceId) return;
-    setAddLoading(true); setAddError("");
+    setAddLoading(true); setAddError(""); setAcFocus(null);
     try {
-      const r1 = await fetch(`/api/sessions/${code}/players`, {
+      const r1 = await fetch("/api/sessions/" + code + "/players", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, playerName: n1 }),
       });
       if (!r1.ok) { const d = await r1.json(); setAddError(d.message ?? "Could not add player 1."); setAddLoading(false); return; }
-      const r2 = await fetch(`/api/sessions/${code}/players`, {
+      const r2 = await fetch("/api/sessions/" + code + "/players", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, playerName: n2 }),
       });
       if (!r2.ok) { const d = await r2.json(); setAddError(d.message ?? "Could not add player 2."); setAddLoading(false); return; }
       setAddName(""); setAddName2(""); setAddTeamName("");
+      setContacts((prev) => addToContacts(n2, addToContacts(n1, prev)));
     } catch { setAddError("Network error."); }
     setAddLoading(false);
   }
@@ -389,7 +528,7 @@ export default function OrganiserPage() {
       const isSingleFormat = session?.format === "SINGLE";
       const body: Record<string, unknown> = { deviceId };
       if (isSingleFormat) { body.teamA = singleAssignment.teamA; body.teamB = singleAssignment.teamB; }
-      const r = await fetch(`/api/sessions/${code}/start`, {
+      const r = await fetch("/api/sessions/" + code + "/start", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -401,56 +540,40 @@ export default function OrganiserPage() {
 
   async function startMatch(matchId: string, courtNumber: number) {
     if (!deviceId) return;
-    await fetch(`/api/matches/${matchId}/start`, {
+    await fetch("/api/matches/" + matchId + "/start", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ courtNumber, deviceId }),
     });
   }
 
-  async function confirmScore(matchId: string) {
-    if (!deviceId) return;
-    setConfirmLoading(matchId);
-    try {
-      await fetch(`/api/matches/${matchId}/score`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, isOrganiserConfirm: true }),
-      });
-    } finally { setConfirmLoading(null); }
-  }
-
-  async function resolveConflict(matchId: string) {
-    if (!deviceId) return;
-    const { pA, pB } = resolving[matchId] ?? { pA: 0, pB: 0 };
-    setResolveLoading(matchId);
-    try {
-      await fetch(`/api/matches/${matchId}/score`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, pointsA: pA, pointsB: pB, isOrganiserOverride: true }),
-      });
-    } finally { setResolveLoading(null); }
-  }
-
   async function submitCourtScore(matchId: string, ppm: number) {
     if (!deviceId) return;
     const cs = courtScores[matchId];
-    if (cs?.pA === null || cs?.pA === undefined) return;
-    const pA = cs.pA; const pB = ppm - pA;
+    const pA = parseInt(cs?.rawA ?? "", 10);
+    if (isNaN(pA) || pA < 0 || pA > ppm) return;
+    const pB = ppm - pA;
     setSubmitLoading(matchId);
     try {
-      await fetch(`/api/matches/${matchId}/score`, {
+      await fetch("/api/matches/" + matchId + "/score", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, pointsA: pA, pointsB: pB, isOrganiserOverride: true }),
       });
-      setCourtScores((prev) => ({ ...prev, [matchId]: { pA: null } }));
+      setCourtScores((prev) => ({ ...prev, [matchId]: { rawA: "" } }));
     } finally { setSubmitLoading(null); }
   }
 
-  function adjustCourtScore(matchId: string, delta: number, ppm: number) {
-    setCourtScores((prev) => {
-      const current = prev[matchId]?.pA ?? 0;
-      const next = Math.max(0, Math.min(ppm, current + delta));
-      return { ...prev, [matchId]: { pA: next } };
-    });
+  async function endSession() {
+    if (!deviceId) return;
+    setEndLoading(true); setEndError("");
+    try {
+      const r = await fetch("/api/sessions/" + code + "/end", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setEndError(data.error ?? "Could not end session."); setEndLoading(false); setEndConfirm(false); return; }
+    } catch { setEndError("Network error."); }
+    setEndLoading(false); setEndConfirm(false);
   }
 
   function tennisAddPoint(team: TTeam) {
@@ -467,10 +590,9 @@ export default function OrganiserPage() {
     });
   }
   function tennisReset() {
-    setTennisHistory([]);
-    setTennisState(T0);
+    setTennisHistory([]); setTennisState(T0);
     scoreSubmittedRef.current = false;
-    localStorage.removeItem(`eps_tennis_${code}`);
+    localStorage.removeItem("eps_tennis_" + code);
   }
   function tennisRandomServer() {
     const t: TTeam = Math.random() < 0.5 ? "A" : "B";
@@ -481,34 +603,36 @@ export default function OrganiserPage() {
   }
 
   function getJoinUrl() {
-    return typeof window !== "undefined" ? `${window.location.origin}/join?code=${code}` : `/join?code=${code}`;
+    return typeof window !== "undefined" ? window.location.origin + "/join?code=" + code : "/join?code=" + code;
   }
 
   async function shareLink() {
     const url = getJoinUrl();
     if (typeof navigator !== "undefined" && navigator.share) {
-      try { await navigator.share({ title: "Join my padel session", text: `Join EasyPadelScore — code: ${code}`, url }); setShareStatus("shared"); setTimeout(() => setShareStatus("idle"), 2500); return; } catch (err: unknown) { if (err instanceof Error && err.name === "AbortError") return; }
+      try { await navigator.share({ title: "Join my padel session", text: "Join EasyPadelScore — code: " + code, url }); setShareStatus("shared"); setTimeout(() => setShareStatus("idle"), 2500); return; } catch (err: unknown) { if (err instanceof Error && err.name === "AbortError") return; }
     }
     try { await navigator.clipboard.writeText(url); setShareStatus("copied"); setTimeout(() => setShareStatus("idle"), 2500); } catch { /* ignore */ }
   }
 
   async function shareQR() {
     const url = getJoinUrl();
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(url)}&bgcolor=0D1B2A&color=FFFFFF&margin=16`;
+    const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=" + encodeURIComponent(url) + "&bgcolor=0D1B2A&color=FFFFFF&margin=16";
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
         setShareQRStatus("loading");
         const resp = await fetch(qrUrl); const blob = await resp.blob();
-        const file = new File([blob], `EasyPadelScore-${code}.png`, { type: "image/png" });
+        const file = new File([blob], "EasyPadelScore-" + code + ".png", { type: "image/png" });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({ title: "Join my padel session", text: `Scan to join session ${code}`, files: [file] });
+          await navigator.share({ title: "Join my padel session", text: "Scan to join session " + code, files: [file] });
           setShareQRStatus("shared"); setTimeout(() => setShareQRStatus("idle"), 2500); return;
         }
       } catch (err: unknown) { if (err instanceof Error && err.name === "AbortError") { setShareQRStatus("idle"); return; } }
-      try { await navigator.share({ title: "Join my padel session", text: `Scan to join session ${code}`, url: qrUrl }); setShareQRStatus("shared"); setTimeout(() => setShareQRStatus("idle"), 2500); return; } catch (err: unknown) { if (err instanceof Error && err.name === "AbortError") { setShareQRStatus("idle"); return; } }
+      try { await navigator.share({ title: "Join my padel session", text: "Scan to join session " + code, url: qrUrl }); setShareQRStatus("shared"); setTimeout(() => setShareQRStatus("idle"), 2500); return; } catch (err: unknown) { if (err instanceof Error && err.name === "AbortError") { setShareQRStatus("idle"); return; } }
     }
     try { await navigator.clipboard.writeText(url); setShareQRStatus("copied"); setTimeout(() => setShareQRStatus("idle"), 2500); } catch { setShareQRStatus("idle"); }
   }
+
+  const lbCols = isMobile ? "32px 1fr 56px" : "40px 1fr 90px 110px 64px";
 
   const st: Record<string, React.CSSProperties> = {
     page: { minHeight: "100vh", background: BLACK, color: WHITE, padding: 16, display: "flex", justifyContent: "center", alignItems: "flex-start" },
@@ -521,12 +645,9 @@ export default function OrganiserPage() {
     btn: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
     btnOrange: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, whiteSpace: "nowrap" as const },
     btnGreen: { borderRadius: 14, padding: "14px 20px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: GREEN, color: WHITE, whiteSpace: "nowrap" as const },
-    btnConfirm: { borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: GREEN, color: WHITE, whiteSpace: "nowrap" as const, marginTop: 10, width: "100%" },
-    courtCard: { borderRadius: 16, padding: 14, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 10 },
-    conflictCard: { borderRadius: 16, padding: 14, background: "rgba(255,64,64,0.07)", border: "1px solid rgba(255,64,64,0.3)", marginBottom: 10 },
+    btnRed: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,64,64,0.45)", background: "rgba(255,64,64,0.12)", color: WHITE, whiteSpace: "nowrap" as const },
+    courtCard: { borderRadius: 16, padding: 12, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 10 },
     queueCard: { borderRadius: 16, padding: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", marginBottom: 10 },
-    stepBtn: { width: 44, height: 44, borderRadius: 10, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.09)", color: WHITE, fontSize: 22, fontWeight: 1000, cursor: "pointer", flexShrink: 0 },
-    val: { fontSize: 22, fontWeight: 1100, minWidth: 32, textAlign: "center" as const },
     names: { fontWeight: 900, fontSize: 14, lineHeight: 1.4 },
     errorBox: { marginTop: 10, background: "rgba(255,64,64,0.10)", border: "1px solid rgba(255,64,64,0.30)", color: WHITE, padding: 12, borderRadius: 12, fontWeight: 900, fontSize: 13 },
     pillsRow: { display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 12 },
@@ -538,19 +659,18 @@ export default function OrganiserPage() {
     btnShareSecondary: { borderRadius: 14, padding: "11px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.20)", background: "rgba(255,255,255,0.07)", color: WHITE, whiteSpace: "nowrap" as const },
     qrWrap: { marginTop: 12, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 },
     addRow: { display: "flex", gap: 10, alignItems: "center" },
-    addInput: { flex: 1, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "12px 14px", fontSize: 15, fontWeight: 900, outline: "none" },
     playerPill: { borderRadius: 12, padding: "8px 14px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", fontSize: 14, fontWeight: 900, color: WHITE },
     lobbyCard: { borderRadius: 18, padding: 18, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)" },
     startSection: { marginTop: 16, borderRadius: 16, padding: 16, background: "rgba(0,200,80,0.06)", border: "1px solid rgba(0,200,80,0.20)", display: "flex", gap: 14, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const },
     lbWrap: { marginTop: 4, borderRadius: 18, padding: 14, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 8 },
-    lbHead: { display: "grid", gridTemplateColumns: "40px 1fr 90px 110px 64px", gap: 8, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 10px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
-    lbRow: { display: "grid", gridTemplateColumns: "40px 1fr 90px 110px 64px", gap: 8, alignItems: "center", borderRadius: 12, padding: "10px 10px" },
+    lbHead: { display: "grid", gridTemplateColumns: lbCols, gap: 8, fontSize: 11, opacity: 0.5, fontWeight: 950, padding: "0 10px", textTransform: "uppercase" as const, letterSpacing: 0.5 },
+    lbRow: { display: "grid", gridTemplateColumns: lbCols, gap: 8, alignItems: "center", borderRadius: 12, padding: "10px 10px" },
     lbRight: { textAlign: "right" as const },
     lbCenter: { textAlign: "center" as const },
     hint: { fontSize: 12, opacity: 0.55, color: WARM_WHITE, lineHeight: 1.4 },
     teamPairCard: { borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10, alignItems: "center" },
     tennisBoard: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 14 },
-    tennisBoardGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+    tennisBoardGrid: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 },
     tennisScoreRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 },
     tennisScoreBox: { borderRadius: 12, padding: "8px 6px", background: "rgba(0,0,0,0.30)", border: "1px solid rgba(255,255,255,0.08)", textAlign: "center" as const },
     tennisScoreLabel: { fontSize: 10, opacity: 0.5, fontWeight: 950, textTransform: "uppercase" as const, letterSpacing: 0.5 },
@@ -562,9 +682,13 @@ export default function OrganiserPage() {
     tennisActionRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 10 },
     tennisSmallBtn: { borderRadius: 14, padding: "13px 10px", fontSize: 14, fontWeight: 1000, cursor: "pointer", background: "rgba(255,255,255,0.06)", color: WHITE, border: "1px solid rgba(255,255,255,0.12)" },
     tennisWinnerBanner: { borderRadius: 18, padding: 20, background: "rgba(255,107,0,0.12)", border: "1px solid rgba(255,107,0,0.35)", textAlign: "center" as const },
-    tennisChipRow: { display: "flex", gap: 8, flexWrap: "wrap" as const, justifyContent: "flex-end" },
     serveReminder: { marginTop: 12, borderRadius: 14, padding: "10px 14px", background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)", fontSize: 12, fontWeight: 900, color: WHITE, lineHeight: 1.5 },
     starPointBanner: { borderRadius: 14, padding: "10px 14px", background: "rgba(255,107,0,0.10)", border: "1px solid rgba(255,107,0,0.30)", fontSize: 13, fontWeight: 1000, color: ORANGE, textAlign: "center" as const, marginBottom: 10 },
+    endConfirmBox: { marginTop: 12, borderRadius: 16, padding: 16, background: "rgba(255,64,64,0.08)", border: "1px solid rgba(255,64,64,0.30)", display: "flex", flexDirection: "column" as const, gap: 10 },
+    settingsPanel: { marginTop: 12, borderRadius: 16, padding: 16, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(255,255,255,0.12)", display: "grid", gap: 14 },
+    settingsPillRow: { display: "flex", gap: 8 },
+    settingsDeuceGrid: { display: "grid", gap: 8 },
+    settingsToggle: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 12, padding: "10px 14px" },
   };
 
   const tennisTeamCard = (serving: boolean): React.CSSProperties => ({
@@ -572,19 +696,30 @@ export default function OrganiserPage() {
     background: serving ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.04)",
     border: serving ? "1px solid rgba(255,107,0,0.45)" : "1px solid rgba(255,255,255,0.08)",
   });
-
   const tennisChip = (active: boolean): React.CSSProperties => ({
     padding: "9px 14px", borderRadius: 999,
-    border: active ? `1px solid ${ORANGE}` : "1px solid rgba(255,255,255,0.14)",
+    border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.14)",
     background: active ? "rgba(255,107,0,0.14)" : "rgba(255,255,255,0.06)",
     color: WHITE, fontWeight: 1000, cursor: "pointer", fontSize: 13,
   });
+  const setPillStyle = (active: boolean): React.CSSProperties => ({
+    padding: "10px 14px", borderRadius: 12, cursor: "pointer", fontWeight: active ? 1000 : 900, flex: 1,
+    border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.12)",
+    background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.05)",
+    color: active ? WHITE : WARM_WHITE, textAlign: "center" as const, fontSize: 13,
+  });
+  const deuceCardStyle = (active: boolean): React.CSSProperties => ({
+    borderRadius: 12, padding: "10px 14px", cursor: "pointer", display: "grid", gap: 2,
+    border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.10)",
+    background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)",
+  });
 
-  if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading…</div></div></div>;
-
-  if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session…{sessionError && ` — ${sessionError}`}</div></div></div>;
+  if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading...</div></div></div>;
+  if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session...{sessionError && " — " + sessionError}</div></div></div>;
 
   const nameById = session.players.reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
+  const sessionNameSet = new Set(session.players.map((p) => p.name.toLowerCase()));
+
   function names(m: Match) {
     return { a1: nameById[m.teamAPlayer1] ?? "?", a2: nameById[m.teamAPlayer2] ?? "?", b1: nameById[m.teamBPlayer1] ?? "?", b2: nameById[m.teamBPlayer2] ?? "?" };
   }
@@ -596,11 +731,11 @@ export default function OrganiserPage() {
     ? singleAssignment.teamA.length === 2 && singleAssignment.teamB.length === 2
     : session.players.length >= minPlayers;
   const canWebShare = typeof navigator !== "undefined" && !!navigator.share;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getJoinUrl())}&bgcolor=0D1B2A&color=FFFFFF&margin=10`;
+  const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=" + encodeURIComponent(getJoinUrl()) + "&bgcolor=0D1B2A&color=FFFFFF&margin=10";
   const fLabel = formatLabel(session.format);
 
-  const shareLinkLabel = shareStatus === "shared" ? "✓ Shared!" : shareStatus === "copied" ? "✓ Copied!" : "⬆ Share link";
-  const shareQRLabel = shareQRStatus === "loading" ? "Loading…" : shareQRStatus === "shared" ? "✓ Shared!" : shareQRStatus === "copied" ? "✓ Link copied" : "Share QR";
+  // Shared props for NameInput
+  const nameInputProps = { acFocus, setAcFocus, contacts, sessionNameSet };
 
   const shareCard = session.status === "LOBBY" ? (
     <div style={st.shareCard}>
@@ -612,7 +747,7 @@ export default function OrganiserPage() {
         </div>
         <div style={st.shareButtons}>
           <button style={{ ...st.btnShare, background: shareStatus !== "idle" ? "rgba(0,200,80,0.85)" : ORANGE }} onClick={shareLink}>
-            {canWebShare ? "⬆" : "📋"} {shareLinkLabel}
+            {canWebShare ? "Share link" : "Copy link"}
           </button>
           <button style={{ ...st.btnShareSecondary, borderColor: showQR ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.20)", background: showQR ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.07)" }} onClick={() => setShowQR((v) => !v)}>
             QR {showQR ? "▲" : "▼"}
@@ -621,10 +756,10 @@ export default function OrganiserPage() {
       </div>
       {showQR && (
         <div style={st.qrWrap}>
-          <img src={qrUrl} alt={`Join ${code}`} width={160} height={160} style={{ borderRadius: 14, display: "block" }} />
+          <img src={qrUrl} alt={"Join " + code} width={160} height={160} style={{ borderRadius: 14, display: "block" }} />
           <button style={{ ...st.btnShareSecondary, background: shareQRStatus !== "idle" ? "rgba(0,200,80,0.15)" : "rgba(255,255,255,0.07)", borderColor: shareQRStatus !== "idle" ? "rgba(0,200,80,0.45)" : "rgba(255,255,255,0.20)", opacity: shareQRStatus === "loading" ? 0.6 : 1 }}
             onClick={shareQR} disabled={shareQRStatus === "loading"}>
-            {canWebShare ? "⬆" : "📋"} {shareQRLabel}
+            {shareQRStatus === "loading" ? "Loading..." : shareQRStatus === "shared" ? "Shared!" : shareQRStatus === "copied" ? "Link copied" : "Share QR"}
           </button>
           <div style={st.hint}>Scan to join on any phone</div>
         </div>
@@ -640,29 +775,32 @@ export default function OrganiserPage() {
         teamPairs.push({ p1: session.players[i].name, p2: session.players[i + 1].name });
       }
     }
+
     const assignedIds = new Set([...singleAssignment.teamA, ...singleAssignment.teamB]);
     const unassigned = session.players.filter((p) => !assignedIds.has(p.id));
     const bothTeamsFull = singleAssignment.teamA.length === 2 && singleAssignment.teamB.length === 2;
+
     const startHint = isSingle
       ? "Assign 2 players to each team, then lock to start."
-      : isTeam
-      ? "Players are paired in join order (1st+2nd, 3rd+4th…). Locking entries generates the full match queue."
+      : isTeam ? "Players are paired in join order (1st+2nd, 3rd+4th). Locking entries generates the full match queue."
       : "Locking entries generates the full match queue.";
-    const startLabel = canStart && !startLoading ? "Lock & Start →" : startLoading ? "Starting…" : isSingle ? "Assign all 4 players to teams" : `Need ${minPlayers - session.players.length} more player${minPlayers - session.players.length !== 1 ? "s" : ""}`;
+    const startLabel = canStart && !startLoading ? "Lock & Start"
+      : startLoading ? "Starting..."
+      : isSingle ? "Assign all 4 players to teams"
+      : "Need " + (minPlayers - session.players.length) + " more player" + (minPlayers - session.players.length !== 1 ? "s" : "");
+
     const slotStyle = (filled: boolean): React.CSSProperties => ({
       borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 900,
       background: filled ? "rgba(255,107,0,0.14)" : "rgba(255,255,255,0.03)",
       border: filled ? "1px solid rgba(255,107,0,0.40)" : "1px dashed rgba(255,255,255,0.18)",
-      color: filled ? WHITE : "rgba(255,255,255,0.25)",
-      cursor: filled ? "pointer" : "default",
+      color: filled ? WHITE : "rgba(255,255,255,0.25)", cursor: filled ? "pointer" : "default",
       minHeight: 42, display: "flex", alignItems: "center",
     });
     const unassignedChipStyle = (disabled: boolean): React.CSSProperties => ({
       borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 900,
       background: disabled ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.07)",
       border: "1px solid rgba(255,255,255,0.14)",
-      color: disabled ? "rgba(255,255,255,0.3)" : WHITE,
-      cursor: disabled ? "default" : "pointer",
+      color: disabled ? "rgba(255,255,255,0.3)" : WHITE, cursor: disabled ? "default" : "pointer",
     });
 
     return (
@@ -671,27 +809,59 @@ export default function OrganiserPage() {
           <div style={st.row}>
             <div>
               <div style={st.title}>Organiser · {code}</div>
-              <div style={st.sub}>{fLabel} · {isSingle ? "1 court" : `${session.courts} court${session.courts > 1 ? "s" : ""}`} · {session.pointsPerMatch} pts · Waiting for players</div>
+              <div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · {session.pointsPerMatch} pts · Waiting for players</div>
             </div>
             <button style={st.btn} onClick={() => router.push("/")}>Home</button>
           </div>
           <div style={st.pillsRow}>
-            {pill(`${session.players.length} joined`, "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
-            {isSingle ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)") : pill(`${minPlayers} needed to start`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
+            {pill(session.players.length + " joined", "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
+            {isSingle
+              ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")
+              : pill(minPlayers + " needed to start", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
           </div>
+
           {shareCard}
+
+          {isSingle && (
+            <div style={{ marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.5 }}>
+              Players can join using the session code above, or you can add them manually below.
+            </div>
+          )}
+
           <div style={st.divider} />
 
           {isSingle ? (
             <>
-              <div style={st.sectionLabel}>Assign teams</div>
+              <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, color: ORANGE, marginBottom: 6 }}>STEP 1 — ADD PLAYERS</div>
+              <div style={{ ...st.hint, marginBottom: 10 }}>
+                Type a name and tap Add{contacts.length > 0 ? " — or start typing to pick from your library" : ""}. Names are saved for future sessions.
+              </div>
+              <div style={st.addRow}>
+                <NameInput value={addName} onChange={setAddName} placeholder="Player name" fieldKey="name1" onSubmit={addPlayerManually} {...nameInputProps} />
+                <button style={{ ...st.btnOrange, opacity: addLoading || !addName.trim() ? 0.5 : 1 }} onClick={addPlayerManually} disabled={addLoading || !addName.trim()}>
+                  {addLoading ? "Adding…" : "Add"}
+                </button>
+              </div>
+              {addError && <div style={st.errorBox}>{addError}</div>}
+              {session.players.length > 0 ? (
+                <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8, marginTop: 10 }}>
+                  {session.players.map((p) => <div key={p.id} style={st.playerPill}>{p.name}</div>)}
+                </div>
+              ) : (
+                <div style={{ ...st.hint, marginTop: 8 }}>No players yet — add names above or share the code.</div>
+              )}
+
+              <div style={st.divider} />
+
+              <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, color: ORANGE, marginBottom: 6 }}>STEP 2 — ASSIGN TEAMS</div>
+              <div style={{ ...st.hint, marginBottom: 10 }}>Tap a player chip above to assign them to a team slot. Tap a filled slot to remove.</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div style={{ borderRadius: 14, padding: 14, background: "rgba(255,107,0,0.06)", border: "1px solid rgba(255,107,0,0.22)" }}>
                   <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, marginBottom: 10, letterSpacing: 0.5 }}>TEAM A</div>
                   <div style={{ display: "grid", gap: 8 }}>
                     {[0, 1].map((slot) => {
                       const pid = singleAssignment.teamA[slot]; const name = pid ? nameById[pid] : null;
-                      return <div key={slot} style={slotStyle(!!name)} onClick={() => pid && toggleSingleAssign(pid)}>{name ?? `Player ${slot + 1}`}{name && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✕</span>}</div>;
+                      return <div key={slot} style={slotStyle(!!name)} onClick={() => pid && toggleSingleAssign(pid)}>{name ?? "Player " + (slot + 1)}{name && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✕</span>}</div>;
                     })}
                   </div>
                 </div>
@@ -700,17 +870,17 @@ export default function OrganiserPage() {
                   <div style={{ display: "grid", gap: 8 }}>
                     {[0, 1].map((slot) => {
                       const pid = singleAssignment.teamB[slot]; const name = pid ? nameById[pid] : null;
-                      return <div key={slot} style={slotStyle(!!name)} onClick={() => pid && toggleSingleAssign(pid)}>{name ?? `Player ${slot + 1}`}{name && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✕</span>}</div>;
+                      return <div key={slot} style={slotStyle(!!name)} onClick={() => pid && toggleSingleAssign(pid)}>{name ?? "Player " + (slot + 1)}{name && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✕</span>}</div>;
                     })}
                   </div>
                 </div>
               </div>
               {session.players.length === 0 ? (
-                <div style={{ ...st.hint, marginTop: 12 }}>No players yet — share the code above.</div>
+                <div style={{ ...st.hint, marginTop: 12 }}>Add players in Step 1 first.</div>
               ) : (
                 <>
                   <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.4, textTransform: "uppercase" as const, letterSpacing: 1.2, marginTop: 14, marginBottom: 8 }}>
-                    {unassigned.length > 0 ? "Unassigned — tap to assign" : bothTeamsFull ? "✓ All players assigned" : "Waiting for more players…"}
+                    {unassigned.length > 0 ? "Tap to assign →" : bothTeamsFull ? "All players assigned ✓" : "Waiting for more players…"}
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>
                     {unassigned.map((p) => {
@@ -723,7 +893,7 @@ export default function OrganiserPage() {
             </>
           ) : (
             <>
-              <div style={st.sectionLabel}>{isTeam ? "Players — paired in join order" : `Players — ${session.players.length}${session.maxPlayers !== null ? ` / ${session.maxPlayers}` : ""}`}</div>
+              <div style={st.sectionLabel}>{isTeam ? "Players — paired in join order" : "Players — " + session.players.length + (session.maxPlayers !== null ? " / " + session.maxPlayers : "")}</div>
               <div style={st.lobbyCard}>
                 {session.players.length === 0 ? (
                   <div style={st.hint}>No players yet — share the code above.</div>
@@ -737,7 +907,7 @@ export default function OrganiserPage() {
                     ))}
                     {session.players.length % 2 !== 0 && (
                       <div style={{ ...st.teamPairCard, opacity: 0.5 }}>
-                        <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>…</div>
+                        <div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>...</div>
                         <div style={{ fontSize: 13, fontWeight: 900 }}>{session.players[session.players.length - 1].name} — waiting for partner</div>
                       </div>
                     )}
@@ -748,56 +918,29 @@ export default function OrganiserPage() {
                   </div>
                 )}
               </div>
+
+              <div style={st.sectionLabel}>Add {isTeam ? "team" : "player"} manually</div>
+              {contacts.length > 0 && <div style={{ ...st.hint, marginBottom: 10 }}>Start typing to pick from your player library.</div>}
+              {isTeam ? (
+                <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14, display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 1000, opacity: 0.5 }}>Team name (optional)</div>
+                  <input style={{ width: "100%", background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "12px 14px", fontSize: 15, fontWeight: 900, outline: "none", boxSizing: "border-box" as const }} value={addTeamName} placeholder="e.g. Team Alpha" maxLength={30} onChange={(e) => setAddTeamName(e.target.value)} />
+                  <NameInput value={addName} onChange={setAddName} placeholder="Player 1 *" fieldKey="name1" {...nameInputProps} />
+                  <NameInput value={addName2} onChange={setAddName2} placeholder="Player 2 *" fieldKey="name2" onSubmit={addTeamPair} {...nameInputProps} />
+                  <button style={{ ...st.btnOrange, opacity: addLoading || !addName.trim() || !addName2.trim() ? 0.5 : 1 }} onClick={addTeamPair} disabled={addLoading || !addName.trim() || !addName2.trim()}>
+                    {addLoading ? "Adding..." : "Add team"}
+                  </button>
+                  <div style={st.hint}>Both player names required. Team name is optional.</div>
+                </div>
+              ) : (
+                <div style={st.addRow}>
+                  <NameInput value={addName} onChange={setAddName} placeholder="Player name" fieldKey="name1" onSubmit={addPlayerManually} {...nameInputProps} />
+                  <button style={{ ...st.btnOrange, opacity: addLoading ? 0.5 : 1 }} onClick={addPlayerManually} disabled={addLoading}>{addLoading ? "Adding..." : "Add"}</button>
+                </div>
+              )}
+              {addError && <div style={st.errorBox}>{addError}</div>}
             </>
           )}
-
-          {/* ── Add team / player ── */}
-          <div style={st.sectionLabel}>Add {isTeam ? "team" : "player"} manually</div>
-          {isTeam ? (
-            <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14, display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 1000, opacity: 0.5 }}>Team name (optional)</div>
-              <input
-                style={st.addInput}
-                value={addTeamName}
-                placeholder="e.g. Team Alpha"
-                maxLength={30}
-                onChange={(e) => setAddTeamName(e.target.value)}
-              />
-              <input
-                style={st.addInput}
-                value={addName}
-                placeholder="Player 1 *"
-                maxLength={30}
-                onChange={(e) => setAddName(e.target.value)}
-              />
-              <input
-                style={st.addInput}
-                value={addName2}
-                placeholder="Player 2 *"
-                maxLength={30}
-                onChange={(e) => setAddName2(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") addTeamPair(); }}
-              />
-              <button
-                style={{ ...st.btnOrange, opacity: addLoading || !addName.trim() || !addName2.trim() ? 0.5 : 1 }}
-                onClick={addTeamPair}
-                disabled={addLoading || !addName.trim() || !addName2.trim()}
-              >
-                {addLoading ? "Adding…" : "Add team"}
-              </button>
-              <div style={st.hint}>Both player names required. Team name is optional.</div>
-            </div>
-          ) : (
-            <div style={st.addRow}>
-              <input style={st.addInput} value={addName} placeholder="Player name" maxLength={30}
-                onChange={(e) => setAddName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") addPlayerManually(); }} />
-              <button style={{ ...st.btnOrange, opacity: addLoading ? 0.5 : 1 }} onClick={addPlayerManually} disabled={addLoading}>
-                {addLoading ? "Adding…" : "Add"}
-              </button>
-            </div>
-          )}
-          {addError && <div style={st.errorBox}>{addError}</div>}
 
           <div style={st.startSection}>
             <div>
@@ -805,7 +948,7 @@ export default function OrganiserPage() {
               <div style={st.hint}>{startHint}</div>
             </div>
             <button style={{ ...st.btnGreen, opacity: canStart && !startLoading ? 1 : 0.4 }} onClick={lockAndStart} disabled={!canStart || startLoading}>
-              {startLoading ? "Starting…" : "Lock & Start →"}
+              {startLoading ? "Starting..." : "Lock & Start"}
             </button>
           </div>
           {startError && <div style={st.errorBox}>{startError}</div>}
@@ -817,23 +960,19 @@ export default function OrganiserPage() {
   // ── ACTIVE / COMPLETE ──────────────────────────────────────────────────────
   const ppm = session.pointsPerMatch;
   const inProgress = session.matches.filter((m) => m.status === "IN_PROGRESS");
-  const conflicts = session.matches.filter((m) => m.scoreStatus === "CONFLICT");
   const pending = session.matches.filter((m) => m.status === "PENDING");
   const complete = session.matches.filter((m) => m.status === "COMPLETE");
   const courtNumbers = Array.from({ length: session.courts }, (_, i) => i + 1);
+  const subtitleParts = [fLabel, session.players.length + " players", session.courts + " court" + (session.courts > 1 ? "s" : ""), ppm + " pts"];
 
-  const subtitleParts = [fLabel, `${session.players.length} players`, `${session.courts} court${session.courts > 1 ? "s" : ""}`, `${ppm} pts`];
-
-  // ── SINGLE ACTIVE: full tennis scorecard ───────────────────────────────────
+  // ── SINGLE ACTIVE ──────────────────────────────────────────────────────────
   if (isSingle) {
     const singleMatch = session.matches[0];
     const a1n = singleMatch ? (nameById[singleMatch.teamAPlayer1] ?? "A1") : "A1";
     const a2n = singleMatch ? (nameById[singleMatch.teamAPlayer2] ?? "A2") : "A2";
     const b1n = singleMatch ? (nameById[singleMatch.teamBPlayer1] ?? "B1") : "B1";
     const b2n = singleMatch ? (nameById[singleMatch.teamBPlayer2] ?? "B2") : "B2";
-    const teamAPlayers = [a1n, a2n];
-    const teamBPlayers = [b1n, b2n];
-
+    const teamAPlayers = [a1n, a2n]; const teamBPlayers = [b1n, b2n];
     const tp = tennisPayload ?? { sets: 1, rules: { deuceMode: "traditional" as DeuceMode, tiebreak: true, superTiebreak: false } };
     const targetSets = setsToWin(tp.sets);
     const inSuperFinalSet = shouldUseSuperTB(tp, tennisState.setIndex);
@@ -844,37 +983,86 @@ export default function OrganiserPage() {
     const scoreDisplay = getScoreDisplay(tennisState);
     const deuceLabel = tp.rules.deuceMode === "golden" ? "Golden point" : tp.rules.deuceMode === "star" ? "Star point (FIP 2026)" : "Traditional advantage";
     const isStarPointMoment = !tennisState.isTiebreak && tp.rules.deuceMode === "star" && tennisState.pA >= 3 && tennisState.pB >= 3 && tennisState.adTeam === null && tennisState.deuceCount >= 2;
-
     const headerTitle = tennisState.matchOver && tennisState.winner
-      ? `${tennisState.winner === "A" ? teamAPlayers.join(" & ") : teamBPlayers.join(" & ")} win!`
-      : tennisState.isTiebreak
-      ? (tennisState.tiebreakTarget === 10 ? "Super Tiebreak" : "Tiebreak")
-      : `Set ${tennisState.setIndex + 1}`;
+      ? (tennisState.winner === "A" ? teamAPlayers.join(" & ") : teamBPlayers.join(" & ")) + " win!"
+      : tennisState.isTiebreak ? (tennisState.tiebreakTarget === 10 ? "Super Tiebreak" : "Tiebreak")
+      : "Set " + (tennisState.setIndex + 1);
+    const settingsSummary = tp.sets === 1 ? "1 set" : "Best of " + tp.sets;
 
     return (
       <div style={st.page}>
         <div style={{ ...st.card, maxWidth: 760 }}>
-          <div style={{ ...st.row, background: NAVY, borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
-            <div>
-              <div style={{ fontWeight: 1000, fontSize: 22, letterSpacing: 0.2 }}>{headerTitle}</div>
-              <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 }}>
-                Sets {tennisState.setsA} – {tennisState.setsB} · Games {tennisState.gamesA} – {tennisState.gamesB}
-                {inSuperFinalSet && !tennisState.matchOver ? " · Super tiebreak" : ""}
+          <div style={{ background: NAVY, borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" as const }}>
+              <div>
+                <div style={{ fontWeight: 1000, fontSize: 22, letterSpacing: 0.2 }}>{headerTitle}</div>
+                <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 }}>
+                  Sets {tennisState.setsA} - {tennisState.setsB} · Games {tennisState.gamesA} - {tennisState.gamesB}
+                  {inSuperFinalSet && !tennisState.matchOver ? " · Super tiebreak" : ""}
+                </div>
+                {showServeHelper && !tennisState.matchOver && (
+                  <div style={{ fontSize: 13, marginTop: 6, fontWeight: 1000, color: ORANGE }}>Serving: {currentServerName}</div>
+                )}
               </div>
-              {showServeHelper && !tennisState.matchOver && (
-                <div style={{ fontSize: 13, marginTop: 6, fontWeight: 1000, color: ORANGE }}>Serving: {currentServerName}</div>
-              )}
-            </div>
-            <div style={st.tennisChipRow}>
-              <div style={tennisChip(showServeHelper)} onClick={() => setShowServeHelper((v) => !v)}>Serve helper</div>
-              <div style={tennisChip(false)} onClick={tennisRandomServer}>Random server</div>
-              <button style={st.btn} onClick={() => router.push("/")}>Home</button>
+              <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "flex-end", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, justifyContent: "flex-end" }}>
+                  <div style={tennisChip(showServeHelper)} onClick={() => setShowServeHelper((v) => !v)}>Serve helper</div>
+                  <div style={tennisChip(false)} onClick={tennisRandomServer}>Random server</div>
+                  <div style={tennisChip(showSettings)} onClick={() => showSettings ? setShowSettings(false) : openSettings()}>⚙ Settings {showSettings ? "▲" : "▼"}</div>
+                </div>
+                <button style={st.btn} onClick={() => router.push("/")}>Home</button>
+              </div>
             </div>
           </div>
 
-          {isStarPointMoment && (
-            <div style={st.starPointBanner}>★ Star Point — next point wins the game</div>
+          {showSettings && (
+            <div style={st.settingsPanel}>
+              <div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE, letterSpacing: 0.3 }}>Match rules — changes take effect immediately</div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.45, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 8 }}>Number of sets</div>
+                <div style={st.settingsPillRow}>
+                  {[1, 3, 5].map((n) => (
+                    <div key={n} style={setPillStyle(editSets === n)} onClick={() => setEditSets(n)}>
+                      {n === 1 ? "1 set" : "Best of " + n}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.45, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 8 }}>Deuce rule</div>
+                <div style={st.settingsDeuceGrid}>
+                  {DEUCE_OPTIONS.map((opt) => (
+                    <div key={opt.value} style={deuceCardStyle(editDeuceMode === opt.value)} onClick={() => setEditDeuceMode(opt.value)}>
+                      <div style={{ fontSize: 13, fontWeight: 1000 }}>{opt.label}</div>
+                      <div style={{ fontSize: 11, opacity: 0.5, color: WARM_WHITE }}>{opt.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={st.settingsToggle}>
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: 13 }}>Tiebreak at 6-6</div>
+                    <div style={{ fontSize: 11, opacity: 0.5, color: WARM_WHITE, marginTop: 2 }}>First to 7 points, win by 2</div>
+                  </div>
+                  <input type="checkbox" checked={editTiebreak} onChange={(e) => setEditTiebreak(e.target.checked)} style={{ transform: "scale(1.4)", accentColor: ORANGE }} />
+                </div>
+                <div style={{ ...st.settingsToggle, opacity: editSets === 1 ? 0.4 : 1 }}>
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: 13 }}>Super tiebreak — final set</div>
+                    <div style={{ fontSize: 11, opacity: 0.5, color: WARM_WHITE, marginTop: 2 }}>{editSets === 1 ? "Not applicable for 1 set" : "Final set replaced by first to 10, win by 2"}</div>
+                  </div>
+                  <input type="checkbox" checked={editSets === 1 ? false : editSuperTiebreak} onChange={(e) => setEditSuperTiebreak(e.target.checked)} disabled={editSets === 1} style={{ transform: "scale(1.4)", accentColor: ORANGE }} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button style={{ ...st.btnOrange, flex: 1, textAlign: "center" as const }} onClick={saveSettings}>Save & close</button>
+                <button style={st.btn} onClick={() => setShowSettings(false)}>Cancel</button>
+              </div>
+            </div>
           )}
+
+          {isStarPointMoment && <div style={st.starPointBanner}>Star Point — next point wins the game</div>}
 
           <div style={st.tennisBoard}>
             <div style={st.tennisBoardGrid}>
@@ -888,23 +1076,13 @@ export default function OrganiserPage() {
                   <div key={team} style={tennisTeamCard(serving)}>
                     <div style={{ fontWeight: 1000, fontSize: 16, marginBottom: 4 }}>Team {team}</div>
                     <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.4, fontWeight: 800 }}>
-                      {players[0]}{showServeHelper && currentServerTeam === team && currentServerSlot === 0 ? " ●" : ""}
-                      <br />
-                      {players[1]}{showServeHelper && currentServerTeam === team && currentServerSlot === 1 ? " ●" : ""}
+                      {players[0]}{showServeHelper && currentServerTeam === team && currentServerSlot === 0 ? " *" : ""}<br />
+                      {players[1]}{showServeHelper && currentServerTeam === team && currentServerSlot === 1 ? " *" : ""}
                     </div>
                     <div style={st.tennisScoreRow}>
-                      <div style={st.tennisScoreBox}>
-                        <div style={st.tennisScoreLabel}>Sets</div>
-                        <div style={st.tennisScoreMid}>{setsVal}</div>
-                      </div>
-                      <div style={st.tennisScoreBox}>
-                        <div style={st.tennisScoreLabel}>{tennisState.isTiebreak ? "TB" : "Points"}</div>
-                        <div style={st.tennisScoreBig}>{scoreVal}</div>
-                      </div>
-                      <div style={st.tennisScoreBox}>
-                        <div style={st.tennisScoreLabel}>Games</div>
-                        <div style={st.tennisScoreMid}>{gamesVal}</div>
-                      </div>
+                      <div style={st.tennisScoreBox}><div style={st.tennisScoreLabel}>Sets</div><div style={st.tennisScoreMid}>{setsVal}</div></div>
+                      <div style={st.tennisScoreBox}><div style={st.tennisScoreLabel}>{tennisState.isTiebreak ? "TB" : "Points"}</div><div style={st.tennisScoreBig}>{scoreVal}</div></div>
+                      <div style={st.tennisScoreBox}><div style={st.tennisScoreLabel}>Games</div><div style={st.tennisScoreMid}>{gamesVal}</div></div>
                     </div>
                   </div>
                 );
@@ -915,29 +1093,24 @@ export default function OrganiserPage() {
           {tennisState.matchOver && tennisState.winner && (
             <div style={{ ...st.tennisWinnerBanner, marginTop: 12 }}>
               <div style={{ fontSize: 24, fontWeight: 1100, color: ORANGE }}>
-                🏆 {tennisState.winner === "A" ? teamAPlayers.join(" & ") : teamBPlayers.join(" & ")} win!
+                {tennisState.winner === "A" ? teamAPlayers.join(" & ") : teamBPlayers.join(" & ")} win!
               </div>
-              <div style={{ fontSize: 14, color: WARM_WHITE, opacity: 0.7, marginTop: 6 }}>
-                {tennisState.setsA} – {tennisState.setsB} sets · Score saved automatically
-              </div>
+              <div style={{ fontSize: 14, color: WARM_WHITE, opacity: 0.7, marginTop: 6 }}>{tennisState.setsA} - {tennisState.setsB} sets · Score saved automatically</div>
             </div>
           )}
-
           {!tennisState.matchOver && (
             <div style={st.tennisControls}>
               <button style={st.tennisBtnA} onClick={() => tennisAddPoint("A")}>Point A</button>
               <button style={st.tennisBtnB} onClick={() => tennisAddPoint("B")}>Point B</button>
             </div>
           )}
-
           <div style={st.tennisActionRow}>
             <button style={{ ...st.tennisSmallBtn, opacity: tennisHistory.length === 0 ? 0.4 : 1 }} onClick={tennisUndo} disabled={tennisHistory.length === 0}>Undo</button>
             <button style={st.tennisSmallBtn} onClick={tennisReset}>Reset</button>
             <button style={st.btn} onClick={() => router.push("/")}>Home</button>
           </div>
-
           <div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, textAlign: "center" as const, paddingTop: 10, lineHeight: 1.5 }}>
-            First to {targetSets} set{targetSets > 1 ? "s" : ""} wins · {deuceLabel}
+            {settingsSummary} · {deuceLabel}
             {tp.rules.tiebreak ? " · Tiebreak at 6-6" : ""}
             {tp.rules.superTiebreak && tp.sets > 1 ? " · Super tiebreak final set" : ""}
           </div>
@@ -959,9 +1132,21 @@ export default function OrganiserPage() {
   })();
 
   const spr = session.servesPerRotation;
-  const serveReminderText = spr
-    ? `Serve rotation: A1 → B1 → A2 → B2 · ${spr} point${spr > 1 ? "s" : ""} each`
-    : null;
+  const serveReminderText = spr ? "Serve rotation: A1 - B1 - A2 - B2 · " + spr + " point" + (spr > 1 ? "s" : "") + " each" : null;
+  const courtGridCols = (session.courts >= 2 && !isMobile) ? "repeat(2, minmax(0,1fr))" : "1fr";
+
+  function getEntryA(matchId: string): string { return courtScores[matchId]?.rawA ?? ""; }
+  function getEntryB(matchId: string): string {
+    const raw = courtScores[matchId]?.rawA ?? "";
+    const n = parseInt(raw, 10);
+    if (raw === "" || isNaN(n) || n < 0 || n > ppm) return "";
+    return String(ppm - n);
+  }
+  function isValidEntry(matchId: string): boolean {
+    const raw = courtScores[matchId]?.rawA ?? "";
+    const n = parseInt(raw, 10);
+    return raw !== "" && !isNaN(n) && n >= 0 && n <= ppm;
+  }
 
   return (
     <div style={st.page}>
@@ -971,126 +1156,130 @@ export default function OrganiserPage() {
             <div style={st.title}>Organiser · {code}</div>
             <div style={st.sub}>{subtitleParts.join(" · ")}</div>
           </div>
-          <button style={st.btn} onClick={() => router.push("/")}>Home</button>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            {session.status === "ACTIVE" && (
+              <button
+                style={{ ...st.btnRed, opacity: inProgress.length > 0 ? 0.35 : 1 }}
+                onClick={() => { if (inProgress.length === 0) { setEndConfirm(true); setEndError(""); } }}
+                disabled={inProgress.length > 0}
+                title={inProgress.length > 0 ? "Complete all in-progress matches first" : "End session early"}
+              >
+                End session
+              </button>
+            )}
+            <button style={st.btn} onClick={() => router.push("/")}>Home</button>
+          </div>
         </div>
 
         <div style={st.pillsRow}>
-          {pill(`${inProgress.length} playing`, "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
-          {pill(`${pending.length} queued`, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
-          {pill(`${complete.length} done`, "rgba(0,200,80,0.12)", "rgba(0,200,80,0.35)", complete.length > 0 ? () => router.push(`/session/${code}/organiser/results`) : undefined)}
-          {conflicts.length > 0 && pill(`⚠ ${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""}`, "rgba(255,64,64,0.15)", "rgba(255,64,64,0.4)")}
+          {pill(inProgress.length + " playing", "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}
+          {pill(pending.length + " queued", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}
+          {pill(complete.length + " done", "rgba(0,200,80,0.12)", "rgba(0,200,80,0.35)", complete.length > 0 ? () => router.push("/session/" + code + "/organiser/results") : undefined)}
         </div>
         {complete.length > 0 && <div style={{ ...st.hint, marginTop: 6 }}>Tap <strong style={{ color: GREEN }}>{complete.length} done</strong> to view and edit confirmed match scores.</div>}
-
-        {serveReminderText && (
-          <div style={st.serveReminder}>
-            🎾 {serveReminderText}
-          </div>
-        )}
+        {serveReminderText && <div style={st.serveReminder}>{serveReminderText}</div>}
 
         <div style={st.divider} />
 
-        {conflicts.length > 0 && (
-          <>
-            <div style={st.sectionLabel}>⚠ Conflicts — enter correct score</div>
-            {conflicts.map((m) => {
-              const { a1, a2, b1, b2 } = names(m);
-              const rv = resolving[m.id] ?? { pA: m.pointsA ?? 0, pB: m.pointsB ?? 0 };
-              const updateRv = (patch: Partial<{ pA: number; pB: number }>) => setResolving((prev) => ({ ...prev, [m.id]: { ...rv, ...patch } }));
-              return (
-                <div key={m.id} style={st.conflictCard}>
-                  <div style={st.names}>Court {m.courtNumber} · {a1} & {a2} <span style={{ opacity: 0.5 }}>vs</span> {b1} & {b2}</div>
-                  <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4 }}>Submitted: {m.scoreSubmissions.map((s) => `${s.pointsA}–${s.pointsB}`).join(" · ")}</div>
-                  <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const }}>
-                    <span style={{ fontSize: 13, opacity: 0.7, minWidth: 60 }}>Team A:</span>
-                    <button style={st.stepBtn} onClick={() => updateRv({ pA: Math.max(0, rv.pA - 1) })}>−</button>
-                    <span style={st.val}>{rv.pA}</span>
-                    <button style={st.stepBtn} onClick={() => updateRv({ pA: rv.pA + 1 })}>+</button>
-                    <span style={{ fontSize: 13, opacity: 0.7, minWidth: 60, marginLeft: 8 }}>Team B:</span>
-                    <button style={st.stepBtn} onClick={() => updateRv({ pB: Math.max(0, rv.pB - 1) })}>−</button>
-                    <span style={st.val}>{rv.pB}</span>
-                    <button style={st.stepBtn} onClick={() => updateRv({ pB: rv.pB + 1 })}>+</button>
-                    <button style={{ ...st.btnOrange, opacity: resolveLoading === m.id ? 0.5 : 1 }} onClick={() => resolveConflict(m.id)} disabled={resolveLoading === m.id}>
-                      {resolveLoading === m.id ? "Saving…" : "Confirm score"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-            <div style={st.divider} />
-          </>
-        )}
-
         <div style={st.sectionLabel}>Courts</div>
-        <div style={{ display: "grid", gap: 10, gridTemplateColumns: session.courts >= 2 ? "repeat(2, minmax(0,1fr))" : "1fr" }}>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: courtGridCols }}>
           {courtNumbers.map((cn) => {
             const m = inProgress.find((x) => x.courtNumber === cn);
             if (!m) return (
               <div key={cn} style={{ ...st.courtCard, opacity: 0.45 }}>
-                <div style={{ fontWeight: 1000, fontSize: 15, color: ORANGE }}>Court {cn}</div>
-                <div style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>Open — no active match</div>
+                <div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>Court {cn}</div>
+                <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Open — no active match</div>
               </div>
             );
+
             const { a1, a2, b1, b2 } = names(m);
-            const isPending = m.scoreStatus === "PENDING"; const isConfirmed = m.scoreStatus === "CONFIRMED"; const isConflict = m.scoreStatus === "CONFLICT";
-            const sColor = isConflict ? RED : isConfirmed ? GREEN : isPending ? ORANGE : WARM_WHITE;
-            const sLabel = isConflict ? "⚠ Conflict" : isConfirmed ? "✓ Confirmed" : isPending ? "⏳ Awaiting confirmation" : "In play";
-            const cs = courtScores[m.id] ?? { pA: null };
-            const entryA = cs.pA; const entryB = entryA !== null ? ppm - entryA : null;
-            const canSubmit = entryA !== null && !isPending && !isConfirmed && !isConflict;
-            const showEntry = !isPending && !isConfirmed && !isConflict;
-            const displayA = m.pointsA; const displayB = m.pointsB;
-            const hasSubmittedScore = displayA !== null && displayB !== null;
-            return (
-              <div key={cn} style={{ ...st.courtCard, borderColor: isPending ? "rgba(255,107,0,0.35)" : isConflict ? "rgba(255,64,64,0.35)" : "rgba(255,107,0,0.2)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div style={{ fontWeight: 1000, fontSize: 15, color: ORANGE }}>Court {cn}</div>
-                  <span style={{ fontSize: 11, fontWeight: 1000, color: sColor }}>{sLabel}</span>
+            const hasScore = m.pointsA !== null && m.pointsB !== null;
+            const rawA = getEntryA(m.id);
+            const rawB = getEntryB(m.id);
+            const valid = isValidEntry(m.id);
+            const entryANum = parseInt(rawA, 10);
+            const entryBNum = parseInt(rawB, 10);
+
+            if (hasScore) {
+              const dA = m.pointsA!; const dB = m.pointsB!;
+              return (
+                <div key={cn} style={{ ...st.courtCard, borderColor: "rgba(0,200,80,0.3)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>Court {cn}</div>
+                    <span style={{ fontSize: 11, fontWeight: 1000, color: GREEN }}>Done</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 6, alignItems: "center" }}>
+                    <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team A</div>
+                      <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{a1} &amp; {a2}</div>
+                      <div style={{ fontSize: 26, fontWeight: 1150, color: dA > dB ? GREEN : dA < dB ? RED : WHITE }}>{dA}</div>
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.4, textAlign: "center" as const }}>vs</div>
+                    <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px", textAlign: "right" as const }}>
+                      <div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team B</div>
+                      <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{b1} &amp; {b2}</div>
+                      <div style={{ fontSize: 26, fontWeight: 1150, color: dB > dA ? GREEN : dB < dA ? RED : WHITE }}>{dB}</div>
+                    </div>
+                  </div>
                 </div>
-                {hasSubmittedScore ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center", marginBottom: 10 }}>
-                    <div><div style={{ fontWeight: 1000, fontSize: 13, opacity: 0.7, marginBottom: 2 }}>Team A</div><div style={{ fontWeight: 950, fontSize: 13 }}>{a1} & {a2}</div></div>
-                    <div style={{ textAlign: "center" as const }}>
-                      <div style={{ fontSize: 30, fontWeight: 1150, letterSpacing: 1 }}>
-                        <span style={{ color: displayA! > displayB! ? GREEN : displayA! < displayB! ? RED : WHITE }}>{displayA}</span>
-                        <span style={{ opacity: 0.3, margin: "0 6px" }}>–</span>
-                        <span style={{ color: displayB! > displayA! ? GREEN : displayB! < displayA! ? RED : WHITE }}>{displayB}</span>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right" as const }}><div style={{ fontWeight: 1000, fontSize: 13, opacity: 0.7, marginBottom: 2 }}>Team B</div><div style={{ fontWeight: 950, fontSize: 13 }}>{b1} & {b2}</div></div>
+              );
+            }
+
+            return (
+              <div key={cn} style={{ ...st.courtCard, borderColor: "rgba(255,107,0,0.2)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>Court {cn}</div>
+                  <span style={{ fontSize: 11, fontWeight: 1000, color: WARM_WHITE, opacity: 0.6 }}>In play</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 6, alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 2 }}>Team A</div>
+                    <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{a1} &amp; {a2}</div>
+                    <input
+                      inputMode="numeric" placeholder="—" value={rawA}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^\d]/g, "");
+                        const n = parseInt(val, 10);
+                        if (val === "" || (!isNaN(n) && n <= ppm)) {
+                          setCourtScores((prev) => ({ ...prev, [m.id]: { rawA: val } }));
+                        }
+                      }}
+                      style={{
+                        width: "100%", background: rawA !== "" ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.07)",
+                        color: WHITE, border: "1px solid " + (rawA !== "" ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.14)"),
+                        borderRadius: 8, padding: "8px 6px", fontSize: 26, fontWeight: 1150,
+                        textAlign: "center" as const, outline: "none", boxSizing: "border-box" as const,
+                      }}
+                    />
                   </div>
-                ) : (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontWeight: 950, fontSize: 13, marginBottom: 4 }}>{a1} & {a2}</div>
-                    <div style={{ fontWeight: 950, fontSize: 13 }}>{b1} & {b2}</div>
-                  </div>
-                )}
-                {showEntry && (
-                  <div style={{ borderRadius: 12, padding: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                      <div style={{ fontSize: 13, fontWeight: 1000, flex: 1 }}>{a1} & {a2}</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <button style={{ ...st.stepBtn, opacity: entryA === null || entryA === 0 ? 0.35 : 1 }} onClick={() => adjustCourtScore(m.id, -1, ppm)} disabled={entryA === null || entryA === 0}>−</button>
-                        <span style={{ fontSize: 28, fontWeight: 1150, minWidth: 36, textAlign: "center" as const, color: entryA === null ? "rgba(255,255,255,0.25)" : WHITE }}>{entryA === null ? "—" : entryA}</span>
-                        <button style={{ ...st.stepBtn, opacity: entryA !== null && entryA >= ppm ? 0.35 : 1 }} onClick={() => adjustCourtScore(m.id, +1, ppm)} disabled={entryA !== null && entryA >= ppm}>+</button>
-                      </div>
+                  <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.4, textAlign: "center" as const }}>vs</div>
+                  <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px", textAlign: "right" as const }}>
+                    <div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 2 }}>Team B</div>
+                    <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{b1} &amp; {b2}</div>
+                    <div style={{
+                      width: "100%", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "8px 6px", fontSize: 26, fontWeight: 1150,
+                      textAlign: "center" as const, border: "1px solid rgba(255,255,255,0.08)",
+                      color: rawB !== "" ? WHITE : "rgba(255,255,255,0.2)", boxSizing: "border-box" as const,
+                    }}>
+                      {rawB !== "" ? rawB : "—"}
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-                      <div style={{ fontSize: 13, fontWeight: 1000, flex: 1, opacity: 0.7 }}>{b1} & {b2}</div>
-                      <div style={{ fontSize: 28, fontWeight: 1150, minWidth: 36, textAlign: "center" as const, color: entryB === null ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.5)", paddingRight: 4 }}>{entryB === null ? "—" : entryB}</div>
-                    </div>
-                    {entryA === null && <div style={{ fontSize: 12, opacity: 0.45, marginTop: 8, textAlign: "center" as const }}>Tap + to enter {a1} & {a2}'s score</div>}
-                    <button style={{ marginTop: 12, width: "100%", borderRadius: 12, padding: "13px 16px", fontSize: 14, fontWeight: 1000, cursor: canSubmit ? "pointer" : "default", border: "none", background: canSubmit ? ORANGE : "rgba(255,255,255,0.1)", color: canSubmit ? WHITE : "rgba(255,255,255,0.3)" }}
-                      onClick={() => submitCourtScore(m.id, ppm)} disabled={!canSubmit || submitLoading === m.id}>
-                      {submitLoading === m.id ? "Submitting…" : canSubmit ? `Submit  ${entryA} – ${entryB}` : "Enter score above"}
-                    </button>
                   </div>
-                )}
-                {isPending && (
-                  <button style={{ ...st.btnConfirm, opacity: confirmLoading === m.id ? 0.5 : 1 }} onClick={() => confirmScore(m.id)} disabled={confirmLoading === m.id}>
-                    {confirmLoading === m.id ? "Confirming…" : `✓ Confirm ${displayA}–${displayB}`}
-                  </button>
-                )}
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.4, textAlign: "center" as const, marginBottom: 8 }}>
+                  {valid ? "Tap submit to confirm" : "Enter Team A score — Team B auto-calculates"}
+                </div>
+                <button
+                  style={{
+                    width: "100%", borderRadius: 10, padding: "12px 10px", fontSize: 13, fontWeight: 1000,
+                    cursor: valid ? "pointer" : "default", border: "none",
+                    background: valid ? ORANGE : "rgba(255,255,255,0.08)",
+                    color: valid ? WHITE : "rgba(255,255,255,0.3)",
+                  }}
+                  onClick={() => submitCourtScore(m.id, ppm)}
+                  disabled={!valid || submitLoading === m.id}
+                >
+                  {submitLoading === m.id ? "Submitting..." : valid ? "Submit " + entryANum + " - " + entryBNum : "Enter score above"}
+                </button>
               </div>
             );
           })}
@@ -1103,11 +1292,11 @@ export default function OrganiserPage() {
               const { a1, a2, b1, b2 } = names(m);
               return (
                 <div key={m.id} style={st.queueCard}>
-                  <div style={st.names}>{a1} & {a2} <span style={{ opacity: 0.4 }}>vs</span> {b1} & {b2}</div>
+                  <div style={st.names}>{a1} &amp; {a2} <span style={{ opacity: 0.4 }}>vs</span> {b1} &amp; {b2}</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" as const }}>
                     {courtNumbers.map((cn) => {
                       const busy = inProgress.some((x) => x.courtNumber === cn);
-                      return <button key={cn} style={{ ...st.btn, opacity: busy ? 0.3 : 1 }} onClick={() => { if (!busy) startMatch(m.id, cn); }} disabled={busy}>Start on Court {cn}</button>;
+                      return <button key={cn} style={{ ...st.btn, opacity: busy ? 0.3 : 1 }} onClick={() => { if (!busy) startMatch(m.id, cn); }} disabled={busy}>Court {cn}</button>;
                     })}
                   </div>
                 </div>
@@ -1116,9 +1305,27 @@ export default function OrganiserPage() {
           </>
         )}
 
-        {pending.length === 0 && inProgress.length === 0 && complete.length > 0 && (
-          <div style={{ opacity: 0.55, fontWeight: 900, padding: "16px 0", textAlign: "center" as const }}>
-            All {complete.length} matches complete 🏆
+        {endConfirm && (
+          <div style={st.endConfirmBox}>
+            <div style={{ fontWeight: 1000, fontSize: 14 }}>End session now?</div>
+            <div style={{ fontSize: 13, opacity: 0.7, lineHeight: 1.5 }}>This will finalise the leaderboard based on completed matches and push results to all players. Remaining queued matches will be cancelled. This cannot be undone.</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+              <button style={{ ...st.btnRed, opacity: endLoading ? 0.5 : 1 }} onClick={endSession} disabled={endLoading}>{endLoading ? "Ending..." : "Yes, end session"}</button>
+              <button style={st.btn} onClick={() => { setEndConfirm(false); setEndError(""); }}>Cancel</button>
+            </div>
+            {endError && <div style={{ fontSize: 13, color: RED, fontWeight: 900 }}>{endError}</div>}
+          </div>
+        )}
+
+        {pending.length === 0 && inProgress.length === 0 && complete.length > 0 && !endConfirm && (
+          <div style={{ marginTop: 8, borderRadius: 18, padding: 24, background: "rgba(255,107,0,0.08)", border: "1px solid rgba(255,107,0,0.30)", textAlign: "center" as const }}>
+            <div style={{ fontSize: 48, marginBottom: 8 }}>🏆</div>
+            <div style={{ fontSize: 22, fontWeight: 1100, color: ORANGE }}>Session Complete!</div>
+            <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 6 }}>All {complete.length} matches finished</div>
+            <button style={{ marginTop: 16, borderRadius: 14, padding: "13px 24px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE }}
+              onClick={() => router.push("/session/" + code + "/organiser/results")}>
+              View Full Results
+            </button>
           </div>
         )}
 
@@ -1128,31 +1335,34 @@ export default function OrganiserPage() {
           <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const }}>Leaderboard</div>
           {complete.length > 0 && (
             <button style={{ borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(0,200,80,0.35)", background: "rgba(0,200,80,0.08)", color: GREEN, whiteSpace: "nowrap" as const }}
-              onClick={() => router.push(`/session/${code}/organiser/results`)}>
-              View all results →
+              onClick={() => router.push("/session/" + code + "/organiser/results")}>
+              View all results
             </button>
           )}
         </div>
         <div style={st.lbWrap}>
           <div style={st.lbHead}>
-            <div style={st.lbCenter}>Rank</div><div>Player</div>
-            <div style={st.lbCenter}>W / D / L</div>
-            <div style={st.lbRight}>Points</div>
+            <div style={st.lbCenter}>Rank</div>
+            <div>Player</div>
+            {!isMobile && <div style={st.lbCenter}>W / D / L</div>}
+            {!isMobile && <div style={st.lbRight}>Points</div>}
             <div style={st.lbRight}>Diff</div>
           </div>
           {leaderboard.map((r, idx) => {
             const isTop3 = idx < 3 && r.played > 0;
             return (
-              <div key={r.playerId} style={{ ...st.lbRow, background: isTop3 ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.04)", border: `1px solid ${isTop3 ? "rgba(255,107,0,0.30)" : "rgba(255,255,255,0.07)"}` }}>
+              <div key={r.playerId} style={{ ...st.lbRow, background: isTop3 ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.04)", border: "1px solid " + (isTop3 ? "rgba(255,107,0,0.30)" : "rgba(255,255,255,0.07)") }}>
                 <div style={{ fontSize: 15, fontWeight: 1100, textAlign: "center" as const, color: idx === 0 && r.played > 0 ? ORANGE : WHITE }}>{idx + 1}</div>
                 <div style={{ fontWeight: 950, fontSize: 14 }}>{r.name}</div>
-                <div style={{ ...st.lbCenter, fontSize: 13, fontWeight: 1000 }}>
-                  <span style={{ color: GREEN }}>{r.wins}</span><span style={{ opacity: 0.35, margin: "0 3px" }}>/</span>
-                  <span style={{ color: WHITE }}>{r.draws}</span><span style={{ opacity: 0.35, margin: "0 3px" }}>/</span>
-                  <span style={{ color: RED }}>{r.losses}</span>
-                </div>
-                <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1000 }}>{r.pointsFor} – {r.pointsAgainst}</div>
-                <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1100, color: r.diff > 0 ? GREEN : r.diff < 0 ? RED : WHITE }}>{r.diff > 0 ? `+${r.diff}` : r.diff}</div>
+                {!isMobile && (
+                  <div style={{ ...st.lbCenter, fontSize: 13, fontWeight: 1000 }}>
+                    <span style={{ color: GREEN }}>{r.wins}</span><span style={{ opacity: 0.35, margin: "0 3px" }}>/</span>
+                    <span style={{ color: WHITE }}>{r.draws}</span><span style={{ opacity: 0.35, margin: "0 3px" }}>/</span>
+                    <span style={{ color: RED }}>{r.losses}</span>
+                  </div>
+                )}
+                {!isMobile && <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1000 }}>{r.pointsFor} - {r.pointsAgainst}</div>}
+                <div style={{ ...st.lbRight, fontSize: 13, fontWeight: 1100, color: r.diff > 0 ? GREEN : r.diff < 0 ? RED : WHITE }}>{r.diff > 0 ? "+" + r.diff : r.diff}</div>
               </div>
             );
           })}

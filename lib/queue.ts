@@ -1,7 +1,6 @@
 // Match queue generator for EasyPadelScore
-// Builds the full session schedule upfront using penalty scoring
 // generateMatchQueue     — MIXED format (rotating partners)
-// generateTeamMatchQueue — TEAM format (fixed partners, rotating opponents)
+// generateTeamMatchQueue — TEAM format (fixed partners, true round-robin)
 
 export type QueuePlayer = {
   id: string;
@@ -10,7 +9,7 @@ export type QueuePlayer = {
 };
 
 export type QueueTeam = {
-  id: string;           // unique team id (player1Id + player2Id concatenated or cuid)
+  id: string;
   player1Id: string;
   player2Id: string;
   isActive: boolean;
@@ -24,15 +23,12 @@ export type QueueMatch = {
   teamBPlayer2: string;
 };
 
-// How many matches to generate per player / per team in the session
-const MATCHES_PER_PLAYER = 5;
-const MATCHES_PER_TEAM   = 5;
-
-// Penalty weights
-const PARTNER_PENALTY  = 3;
-const OPPONENT_PENALTY = 1;
-const SITOUT_PENALTY   = 4;
-const GENERATOR_ATTEMPTS = 300;
+// ─── MIXED: penalty weights ────────────────────────────────────────────────────
+const MATCHES_PER_PLAYER  = 5;
+const PARTNER_PENALTY     = 3;
+const OPPONENT_PENALTY    = 1;
+const SITOUT_PENALTY      = 4;
+const GENERATOR_ATTEMPTS  = 300;
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -54,7 +50,6 @@ function addPairCount(
   map.get(b)!.set(a, (map.get(b)!.get(a) ?? 0) + 1);
 }
 
-// ─── MIXED: Score a candidate round against history ───────────────────────────
 function scoreRound(
   matches: { tA: [string, string]; tB: [string, string] }[],
   partnerCount: Map<string, Map<string, number>>,
@@ -70,31 +65,12 @@ function scoreRound(
       for (const b of m.tB)
         score += (opponentCount.get(a)?.get(b) ?? 0) * OPPONENT_PENALTY;
   }
-  for (const pid of sitOuts) {
+  for (const pid of sitOuts)
     score += (sitOutCount.get(pid) ?? 0) * SITOUT_PENALTY;
-  }
   return score;
 }
 
-// ─── TEAM: Score a candidate round against history ────────────────────────────
-// Units here are team IDs, not player IDs
-function scoreTeamRound(
-  matches: { tA: string; tB: string }[],   // tA/tB are team IDs
-  opponentCount: Map<string, Map<string, number>>,
-  sitOutCount: Map<string, number>,
-  sitOuts: string[]
-): number {
-  let score = 0;
-  for (const m of matches) {
-    score += (opponentCount.get(m.tA)?.get(m.tB) ?? 0) * OPPONENT_PENALTY;
-  }
-  for (const tid of sitOuts) {
-    score += (sitOutCount.get(tid) ?? 0) * SITOUT_PENALTY;
-  }
-  return score;
-}
-
-// ─── MIXED queue generator ────────────────────────────────────────────────────
+// ─── MIXED queue generator (unchanged) ───────────────────────────────────────
 export function generateMatchQueue(
   players: QueuePlayer[],
   courts: number
@@ -160,9 +136,8 @@ export function generateMatchQueue(
       addPairCount(partnerCount, m.tB[0], m.tB[1]);
       for (const a of m.tA)
         for (const b of m.tB) addPairCount(opponentCount, a, b);
-      for (const pid of [...m.tA, ...m.tB]) {
+      for (const pid of [...m.tA, ...m.tB])
         matchCount.set(pid, (matchCount.get(pid) ?? 0) + 1);
-      }
       allMatches.push({
         queuePosition: queuePosition++,
         teamAPlayer1: m.tA[0],
@@ -172,83 +147,59 @@ export function generateMatchQueue(
       });
     }
 
-    for (const pid of sitOuts) {
+    for (const pid of sitOuts)
       sitOutCount.set(pid, (sitOutCount.get(pid) ?? 0) + 1);
-    }
     lastSitOutIds = new Set(sitOuts);
   }
 
   return allMatches;
 }
 
-// ─── TEAM queue generator ─────────────────────────────────────────────────────
-// Partners are fixed. We schedule which teams play each other.
-// teamAPlayer1/teamAPlayer2 = team A's fixed pair; same for B.
+// ─── TEAM queue generator — true round-robin ──────────────────────────────────
+//
+// Uses the circle method to guarantee every team plays every other team
+// exactly once. Session ends naturally when the full round-robin is complete.
+//
+// For N teams (even): N-1 rounds, each with N/2 matches.
+// For N teams (odd):  N rounds, each with (N-1)/2 matches — one team sits out
+//                     each round, rotating so each team sits out exactly once.
+//
+// The courts parameter does not change the total schedule — it only determines
+// how many matches run simultaneously (handled by auto-assign in the score route).
+// Matches are ordered round by round so no team is double-scheduled within a round.
+//
 export function generateTeamMatchQueue(
   teams: QueueTeam[],
   courts: number
 ): QueueMatch[] {
-  const activeTeams    = teams.filter((t) => t.isActive);
-  const teamsPerRound  = courts * 2;
-  const totalRounds    = Math.ceil(
-    (activeTeams.length * MATCHES_PER_TEAM) / teamsPerRound
-  );
+  const active = teams.filter((t) => t.isActive);
+  const n = active.length;
 
-  // Opponent tracking is by team ID
-  const opponentCount = new Map<string, Map<string, number>>();
-  const sitOutCount   = new Map<string, number>();
-  const matchCount    = new Map<string, number>();
+  if (n < 2) return [];
 
-  for (const t of activeTeams) {
-    opponentCount.set(t.id, new Map());
-    sitOutCount.set(t.id, 0);
-    matchCount.set(t.id, 0);
-  }
+  // ── Circle method ──────────────────────────────────────────────────────────
+  // If n is odd, add a virtual "bye" slot at the end (index n).
+  // Any match that involves the bye is skipped (that team sits out that round).
+  const size = n % 2 === 0 ? n : n + 1;
+
+  // indices[0] is fixed; indices[1..size-1] rotate each round.
+  const indices = Array.from({ length: size }, (_, i) => i);
 
   const allMatches: QueueMatch[] = [];
   let queuePosition = 0;
-  let lastSitOutIds = new Set<string>();
 
-  for (let round = 0; round < totalRounds; round++) {
-    const sitOutsNeeded = activeTeams.length - teamsPerRound;
-    let sitOuts: string[] = [];
+  for (let round = 0; round < size - 1; round++) {
+    // Pair up: indices[0] vs indices[size-1],
+    //          indices[1] vs indices[size-2], etc.
+    for (let i = 0; i < size / 2; i++) {
+      const a = indices[i];
+      const b = indices[size - 1 - i];
 
-    if (sitOutsNeeded > 0) {
-      const eligible = activeTeams.filter((t) => !lastSitOutIds.has(t.id));
-      const sorted = [...eligible].sort((a, b) => {
-        const sitDiff = (sitOutCount.get(a.id) ?? 0) - (sitOutCount.get(b.id) ?? 0);
-        if (sitDiff !== 0) return sitDiff;
-        return (matchCount.get(b.id) ?? 0) - (matchCount.get(a.id) ?? 0);
-      });
-      sitOuts = sorted.slice(0, sitOutsNeeded).map((t) => t.id);
-    }
+      // Skip if either slot is the bye (index >= n)
+      if (a >= n || b >= n) continue;
 
-    const sitOutSet   = new Set(sitOuts);
-    const roundTeams  = activeTeams.filter((t) => !sitOutSet.has(t.id));
-
-    let bestRound: { tA: string; tB: string }[] | null = null;
-    let bestScore = Infinity;
-
-    for (let attempt = 0; attempt < GENERATOR_ATTEMPTS; attempt++) {
-      const shuffled  = shuffle(roundTeams);
-      const candidate: { tA: string; tB: string }[] = [];
-      for (let c = 0; c < courts; c++) {
-        const b = c * 2;
-        candidate.push({ tA: shuffled[b].id, tB: shuffled[b + 1].id });
-      }
-      const s = scoreTeamRound(candidate, opponentCount, sitOutCount, sitOuts);
-      if (s < bestScore) { bestScore = s; bestRound = candidate; }
-    }
-
-    // Commit round — resolve team IDs back to player IDs for QueueMatch
-    const teamById = new Map(activeTeams.map((t) => [t.id, t]));
-    for (const m of bestRound!) {
-      const tA = teamById.get(m.tA)!;
-      const tB = teamById.get(m.tB)!;
-
-      addPairCount(opponentCount, m.tA, m.tB);
-      matchCount.set(m.tA, (matchCount.get(m.tA) ?? 0) + 1);
-      matchCount.set(m.tB, (matchCount.get(m.tB) ?? 0) + 1);
+      const tA = active[a];
+      const tB = active[b];
 
       allMatches.push({
         queuePosition: queuePosition++,
@@ -259,10 +210,12 @@ export function generateTeamMatchQueue(
       });
     }
 
-    for (const tid of sitOuts) {
-      sitOutCount.set(tid, (sitOutCount.get(tid) ?? 0) + 1);
+    // Rotate indices[1..size-1]: move the last element to position 1.
+    const last = indices[size - 1];
+    for (let i = size - 1; i > 1; i--) {
+      indices[i] = indices[i - 1];
     }
-    lastSitOutIds = new Set(sitOuts);
+    indices[1] = last;
   }
 
   return allMatches;

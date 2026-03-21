@@ -10,6 +10,7 @@ const ORANGE = "#FF6B00";
 const WARM_WHITE = "#F5F5F5";
 
 type SessionFormat = "SINGLE" | "MIXED" | "TEAM" | null;
+type SessionStatus = "LOBBY" | "ACTIVE" | "COMPLETE" | null;
 
 function JoinForm() {
   const router = useRouter();
@@ -19,62 +20,63 @@ function JoinForm() {
   const [playerName2, setPlayerName2] = useState("");
   const [teamName, setTeamName] = useState("");
   const [sessionFormat, setSessionFormat] = useState<SessionFormat>(null);
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>(null);
   const [formatLoading, setFormatLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isFull, setIsFull] = useState(false);
 
-  // Fetch session format whenever code reaches 4 chars
   useEffect(() => {
     const c = code.trim().toUpperCase();
-    if (c.length !== 4) { setSessionFormat(null); return; }
+    if (c.length !== 4) { setSessionFormat(null); setSessionStatus(null); return; }
     setFormatLoading(true);
     setError("");
     fetch(`/api/sessions/${c}`)
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data?.format) setSessionFormat(data.format); else setSessionFormat(null); })
-      .catch(() => setSessionFormat(null))
+      .then((data) => {
+        if (data?.format) setSessionFormat(data.format); else setSessionFormat(null);
+        if (data?.status) setSessionStatus(data.status as SessionStatus); else setSessionStatus(null);
+      })
+      .catch(() => { setSessionFormat(null); setSessionStatus(null); })
       .finally(() => setFormatLoading(false));
   }, [code]);
 
   const isTeam = sessionFormat === "TEAM";
+  const isLocked = sessionStatus === "ACTIVE" || sessionStatus === "COMPLETE";
 
   async function join() {
     const c = code.trim().toUpperCase();
     if (c.length !== 4) { setError("Enter a 4-character session code."); return; }
-    if (!playerName.trim()) { setError("Enter your name to join."); return; }
+    if (!playerName.trim()) { setError(isTeam ? "Enter Player 1's name to join." : "Enter your name to join."); return; }
     setLoading(true); setError(""); setIsFull(false);
 
     try {
-      // Register player 1 (the person holding the device)
-      const r1 = await fetch(`/api/sessions/${c}/devices`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerName: playerName.trim() }),
+      const body: Record<string, string> = { playerName: playerName.trim() };
+      if (isTeam && playerName2.trim()) body.playerName2 = playerName2.trim();
+
+      const r = await fetch(`/api/sessions/${c}/devices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
-      const data1 = await r1.json();
-      if (!r1.ok) {
-        if (data1.error === "SESSION_FULL") setIsFull(true);
-        setError(data1.message ?? data1.error ?? "Could not join session.");
+      const data = await r.json();
+
+      if (!r.ok) {
+        if (data.error === "SESSION_FULL") setIsFull(true);
+        setError(data.message ?? data.error ?? "Could not join session.");
         setLoading(false); return;
       }
-      localStorage.setItem(`eps_join_${c}`, JSON.stringify({ deviceId: data1.deviceId, isOrganiser: false }));
-      if (data1.playerId) localStorage.setItem(`eps_player_${c}`, JSON.stringify({ id: data1.playerId, name: data1.playerName }));
 
-      // If Team format and player 2 name was entered, register them too
-      if (isTeam && playerName2.trim()) {
-        const r2 = await fetch(`/api/sessions/${c}/devices`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playerName: playerName2.trim() }),
-        });
-        if (!r2.ok) {
-          // Player 1 already added — still proceed to player view, just warn
-          const d2 = await r2.json();
-          console.warn("Could not add player 2:", d2.message ?? d2.error);
-        }
+      localStorage.setItem(`eps_join_${c}`, JSON.stringify({ deviceId: data.deviceId, isOrganiser: false }));
+      if (data.playerId) {
+        localStorage.setItem(`eps_player_${c}`, JSON.stringify({ id: data.playerId, name: data.playerName }));
       }
 
       router.push(`/session/${c}/player`);
-    } catch { setError("Network error — check your connection."); setLoading(false); }
+    } catch {
+      setError("Network error — check your connection.");
+      setLoading(false);
+    }
   }
 
   const st: Record<string, React.CSSProperties> = {
@@ -94,6 +96,10 @@ function JoinForm() {
     formatPill: { display: "inline-block", borderRadius: 999, padding: "4px 12px", fontSize: 11, fontWeight: 1000, background: "rgba(255,107,0,0.15)", border: "1px solid rgba(255,107,0,0.40)", color: ORANGE, marginBottom: 16 },
     teamCard: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14, display: "grid", gap: 10, marginTop: 4 },
     soloNote: { marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,107,0,0.07)", border: "1px solid rgba(255,107,0,0.22)", fontSize: 12, fontWeight: 900, color: WARM_WHITE, lineHeight: 1.5 },
+    lockedBox: { marginTop: 14, borderRadius: 14, padding: "14px 16px", background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.35)", display: "grid", gap: 8 },
+    lockedTitle: { fontWeight: 1000, fontSize: 14, color: WHITE },
+    lockedSub: { fontSize: 13, color: WARM_WHITE, opacity: 0.7, lineHeight: 1.5 },
+    playerViewBtn: { marginTop: 4, width: "100%", borderRadius: 12, padding: "12px 16px", fontSize: 14, fontWeight: 1000, cursor: "pointer", border: `1px solid ${ORANGE}`, background: "rgba(255,107,0,0.12)", color: WHITE },
   };
 
   return (
@@ -101,7 +107,9 @@ function JoinForm() {
       <div style={st.card}>
         <button style={st.backBtn} onClick={() => router.push("/")}>← Back</button>
         <div style={st.title}>Join Session</div>
-        <div style={st.sub}>Enter the code from your organiser{isTeam ? " and your team details." : " and your name."}</div>
+        <div style={st.sub}>
+          Enter the code from your organiser{isTeam ? " and your team details." : " and your name."}
+        </div>
 
         <div style={st.label}>Session code</div>
         <input
@@ -115,6 +123,7 @@ function JoinForm() {
         />
 
         {formatLoading && <div style={{ ...st.hint, marginTop: 10 }}>Looking up session…</div>}
+
         {sessionFormat && !formatLoading && (
           <div style={{ marginTop: 10 }}>
             <span style={st.formatPill}>
@@ -123,70 +132,108 @@ function JoinForm() {
           </div>
         )}
 
-        <div style={st.divider} />
-
-        {isTeam ? (
-          <>
-            <div style={st.label}>Your team</div>
-            <div style={st.teamCard}>
-              <div style={{ fontSize: 12, fontWeight: 1000, opacity: 0.5 }}>Team name (optional)</div>
-              <input
-                style={st.teamNameInput}
-                value={teamName}
-                placeholder="e.g. The Smashers"
-                maxLength={30}
-                onChange={(e) => setTeamName(e.target.value)}
-              />
-              <input
-                style={st.nameInput}
-                value={playerName}
-                placeholder="Player 1 name *"
-                maxLength={30}
-                onChange={(e) => setPlayerName(e.target.value)}
-              />
-              <input
-                style={st.nameInput}
-                value={playerName2}
-                placeholder="Player 2 name (optional)"
-                maxLength={30}
-                onChange={(e) => setPlayerName2(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") join(); }}
-              />
+        {/* ── Session locked warning ── */}
+        {isLocked && !formatLoading && (
+          <div style={st.lockedBox}>
+            <div style={st.lockedTitle}>
+              {sessionStatus === "COMPLETE" ? "🏆 Session complete" : "🔒 Session in progress"}
             </div>
-            {!playerName2.trim() && (
-              <div style={st.soloNote}>
-                No partner? Enter your name only — you'll be paired with another solo player, or held as a reserve if none are waiting.
+            <div style={st.lockedSub}>
+              {sessionStatus === "COMPLETE"
+                ? "This session has finished. You can still view the player screen to see results."
+                : "This session has already started. New players can't join — ask your organiser to add you manually from the organiser view."}
+            </div>
+            {sessionStatus === "ACTIVE" && (
+              <div style={st.lockedSub}>
+                Already registered? Go to the player view to claim your name.
+              </div>
+            )}
+            <button
+              style={st.playerViewBtn}
+              onClick={() => router.push(`/session/${code.trim().toUpperCase()}/player`)}
+            >
+              Go to player view →
+            </button>
+          </div>
+        )}
+
+        {/* ── Join form — only shown when session is LOBBY or unknown ── */}
+        {!isLocked && (
+          <>
+            <div style={st.divider} />
+
+            {isTeam ? (
+              <>
+                <div style={st.label}>Your team</div>
+                <div style={st.teamCard}>
+                  <div style={{ fontSize: 12, fontWeight: 1000, opacity: 0.5 }}>Team name (optional)</div>
+                  <input
+                    style={st.teamNameInput}
+                    value={teamName}
+                    placeholder="e.g. The Smashers"
+                    maxLength={30}
+                    onChange={(e) => setTeamName(e.target.value)}
+                  />
+                  <input
+                    style={st.nameInput}
+                    value={playerName}
+                    placeholder="Player 1 name *"
+                    maxLength={30}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                  />
+                  <input
+                    style={st.nameInput}
+                    value={playerName2}
+                    placeholder="Player 2 name (optional)"
+                    maxLength={30}
+                    onChange={(e) => setPlayerName2(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") join(); }}
+                  />
+                </div>
+                {!playerName2.trim() && playerName.trim() && (
+                  <div style={st.soloNote}>
+                    No partner? Enter your name only — you'll be paired with another solo player, or held as a reserve if none are waiting.
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div style={st.label}>Your name</div>
+                <input
+                  style={st.nameInput}
+                  value={playerName}
+                  placeholder="e.g. Chris"
+                  maxLength={30}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") join(); }}
+                />
+                <div style={st.hint}>Your name will appear on the leaderboard and court assignments.</div>
+              </>
+            )}
+
+            <button
+              style={{ ...st.primaryBtn, opacity: loading ? 0.5 : 1 }}
+              onClick={join}
+              disabled={loading}
+            >
+              {loading
+                ? "Joining…"
+                : isTeam
+                  ? (playerName2.trim() ? "Join as a team" : "Join solo")
+                  : "Join Session"}
+            </button>
+
+            {error && (
+              <div style={{
+                ...st.errorBox,
+                background: isFull ? "rgba(255,180,0,0.10)" : "rgba(255,64,64,0.10)",
+                border: `1px solid ${isFull ? "rgba(255,180,0,0.40)" : "rgba(255,64,64,0.30)"}`,
+              }}>
+                {isFull && <div style={{ fontSize: 18, marginBottom: 4 }}>🏟️</div>}
+                {error}
               </div>
             )}
           </>
-        ) : (
-          <>
-            <div style={st.label}>Your name</div>
-            <input
-              style={st.nameInput}
-              value={playerName}
-              placeholder="e.g. Chris"
-              maxLength={30}
-              onChange={(e) => setPlayerName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") join(); }}
-            />
-            <div style={st.hint}>Your name will appear on the leaderboard and court assignments.</div>
-          </>
-        )}
-
-        <button
-          style={{ ...st.primaryBtn, opacity: loading ? 0.5 : 1 }}
-          onClick={join}
-          disabled={loading}
-        >
-          {loading ? "Joining…" : isTeam ? (playerName2.trim() ? "Join as a team" : "Join solo") : "Join Session"}
-        </button>
-
-        {error && (
-          <div style={{ ...st.errorBox, background: isFull ? "rgba(255,180,0,0.10)" : "rgba(255,64,64,0.10)", border: `1px solid ${isFull ? "rgba(255,180,0,0.40)" : "rgba(255,64,64,0.30)"}` }}>
-            {isFull && <div style={{ fontSize: 18, marginBottom: 4 }}>🏟️</div>}
-            {error}
-          </div>
         )}
       </div>
     </div>

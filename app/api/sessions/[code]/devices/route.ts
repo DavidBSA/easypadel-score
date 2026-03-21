@@ -17,7 +17,7 @@ export async function POST(
     }
 
     const body = await req.json();
-    const { organiserPin, playerName, playerId, courtNumber } = body;
+    const { organiserPin, playerName, playerName2, playerId, courtNumber } = body;
 
     // ── Path 1: Organiser ──────────────────────────────────────────────────────
     if (organiserPin && organiserPin === session.organiserPin) {
@@ -42,7 +42,11 @@ export async function POST(
         );
       }
 
-      const device = await prisma.device.create({
+      const existingDevice = await prisma.device.findFirst({
+        where: { sessionId: session.id, playerId: existing.id },
+      });
+
+      const device = existingDevice ?? await prisma.device.create({
         data: {
           sessionId: session.id,
           isOrganiser: false,
@@ -61,7 +65,7 @@ export async function POST(
       });
     }
 
-    // ── Path 3: Self-registration (new player via join code) ───────────────────
+    // ── Path 3: Self-registration ──────────────────────────────────────────────
     if (session.status !== "LOBBY") {
       return NextResponse.json(
         { error: "SESSION_LOCKED", message: "This session has already started. Ask your organiser to add you manually." },
@@ -74,10 +78,10 @@ export async function POST(
       return NextResponse.json({ error: "Player name is required." }, { status: 400 });
     }
 
-    const duplicate = session.players.some(
+    const duplicate1 = session.players.some(
       (p) => p.name.toLowerCase() === name.toLowerCase()
     );
-    if (duplicate) {
+    if (duplicate1) {
       return NextResponse.json(
         { error: "DUPLICATE_NAME", message: `"${name}" has already joined this session. Please use a different name.` },
         { status: 409 }
@@ -91,6 +95,64 @@ export async function POST(
       );
     }
 
+    const name2 = (playerName2 ?? "").trim();
+
+    // ── Path 3a: Team registration (both players) ──────────────────────────────
+    if (name2) {
+      if (name.toLowerCase() === name2.toLowerCase()) {
+        return NextResponse.json(
+          { error: "DUPLICATE_NAME", message: "Both players must have different names." },
+          { status: 400 }
+        );
+      }
+
+      const duplicate2 = session.players.some(
+        (p) => p.name.toLowerCase() === name2.toLowerCase()
+      );
+      if (duplicate2) {
+        return NextResponse.json(
+          { error: "DUPLICATE_NAME", message: `"${name2}" has already joined this session. Please use a different name.` },
+          { status: 409 }
+        );
+      }
+
+      if (session.maxPlayers !== null && session.players.length + 1 >= session.maxPlayers) {
+        return NextResponse.json(
+          { error: "SESSION_FULL", message: "Not enough slots for a full team — ask your organiser about the next event." },
+          { status: 409 }
+        );
+      }
+
+      const { device, player1, player2 } = await prisma.$transaction(async (tx) => {
+        const player1 = await tx.player.create({
+          data: { sessionId: session.id, name },
+        });
+        const player2 = await tx.player.create({
+          data: { sessionId: session.id, name: name2, partnerName: player1.id },
+        });
+        await tx.player.update({
+          where: { id: player1.id },
+          data: { partnerName: player2.id },
+        });
+        const device = await tx.device.create({
+          data: { sessionId: session.id, isOrganiser: false, playerId: player1.id, courtNumber: courtNumber ?? null },
+        });
+        return { device, player1, player2 };
+      });
+
+      return NextResponse.json({
+        deviceId: device.id,
+        isOrganiser: false,
+        playerId: player1.id,
+        playerName: player1.name,
+        partnerId: player2.id,
+        partnerName: player2.name,
+        sessionId: session.id,
+        code: session.code,
+      });
+    }
+
+    // ── Path 3b: Solo registration ─────────────────────────────────────────────
     const { device, player } = await prisma.$transaction(async (tx) => {
       const player = await tx.player.create({
         data: { sessionId: session.id, name },
