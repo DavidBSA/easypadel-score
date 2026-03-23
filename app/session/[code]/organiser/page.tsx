@@ -46,7 +46,6 @@ function isFinalSetSuperTBForScore(setIdx: number, tp: TennisPayload): boolean {
   return tp.rules.superTiebreak && tp.sets > 1 && setIdx === tp.sets - 1;
 }
 
-/** Returns winner team if the game score unambiguously completes a set, else null */
 function detectSetWinner(gA: number, gB: number, tp: TennisPayload, setIdx: number): TTeam | null {
   if (isFinalSetSuperTBForScore(setIdx, tp)) {
     if (gA >= 10 && gA - gB >= 2) return "A";
@@ -60,7 +59,6 @@ function detectSetWinner(gA: number, gB: number, tp: TennisPayload, setIdx: numb
   return null;
 }
 
-/** Returns true if the game score is structurally valid for the current set */
 function isGameScoreValid(gA: number, gB: number, tp: TennisPayload, setIdx: number): boolean {
   if (gA === 0 && gB === 0) return true;
   if (isFinalSetSuperTBForScore(setIdx, tp)) return gA <= 25 && gB <= 25;
@@ -154,15 +152,17 @@ export default function OrganiserPage() {
   const [courtScores, setCourtScores] = useState<Record<string, CourtScore>>({});
   const [submitLoading, setSubmitLoading] = useState<string | null>(null);
 
+  // ── PIN recovery ───────────────────────────────────────────────────────────
+  const [pinInput, setPinInput] = useState("");
+  const [pinLoading, setPinLoading] = useState(false);
+  const [pinError, setPinError] = useState("");
+
   // ── SINGLE scoring mode ────────────────────────────────────────────────────
   const [orgScoringMode, setOrgScoringMode] = useState<OrgScoringMode>("final");
-  // Final score: games (current set) — number steppers
   const [orgFinalGamesA, setOrgFinalGamesA] = useState(0);
   const [orgFinalGamesB, setOrgFinalGamesB] = useState(0);
-  // Final score: sets won
   const [orgFinalSetsA, setOrgFinalSetsA] = useState(0);
   const [orgFinalSetsB, setOrgFinalSetsB] = useState(0);
-  // Final score: completed set log
   const [orgSetLog, setOrgSetLog] = useState<{ gamesA: number; gamesB: number }[]>([]);
   const [orgSubmitting, setOrgSubmitting] = useState(false);
 
@@ -218,6 +218,22 @@ export default function OrganiserPage() {
     return () => { es.close(); if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   }, [deviceId, code, applySession]);
 
+  // ── PIN recovery submit ────────────────────────────────────────────────────
+  async function submitPin() {
+    const pin = pinInput.trim(); if (!pin) return;
+    setPinLoading(true); setPinError("");
+    try {
+      const r = await fetch("/api/sessions/" + code + "/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organiserPin: pin }) });
+      const data = await r.json();
+      if (!r.ok) { setPinError(data.error ?? data.message ?? "Incorrect PIN — please try again."); setPinLoading(false); return; }
+      const newDeviceId: string = data.deviceId;
+      localStorage.setItem("eps_join_" + code, JSON.stringify({ deviceId: newDeviceId, isOrganiser: true }));
+      localStorage.setItem("eps_pin_" + code, pin);
+      setDeviceId(newDeviceId);
+    } catch { setPinError("Network error — please try again."); }
+    setPinLoading(false);
+  }
+
   function openSettings() { const tp = tennisPayload ?? { sets: 1, rules: { deuceMode: "traditional" as DeuceMode, tiebreak: true, superTiebreak: false } }; setEditSets(tp.sets); setEditDeuceMode(tp.rules.deuceMode); setEditTiebreak(tp.rules.tiebreak); setEditSuperTiebreak(tp.rules.superTiebreak); setShowSettings(true); }
   function saveSettings() { const next: TennisPayload = { sets: editSets, rules: { deuceMode: editDeuceMode, tiebreak: editTiebreak, superTiebreak: editSets === 1 ? false : editSuperTiebreak } }; setTennisPayload(next); localStorage.setItem("eps_match_rules_" + code, JSON.stringify(next)); setShowSettings(false); }
 
@@ -232,7 +248,6 @@ export default function OrganiserPage() {
     });
   }
 
-  // ── SINGLE final scoring: confirm a set ───────────────────────────────────
   function orgConfirmSet(winner: TTeam) {
     setOrgSetLog((prev) => [...prev, { gamesA: orgFinalGamesA, gamesB: orgFinalGamesB }]);
     if (winner === "A") setOrgFinalSetsA((v) => v + 1);
@@ -350,7 +365,6 @@ export default function OrganiserPage() {
     settingsDeuceGrid: { display: "grid", gap: 8 },
     settingsToggle: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 12, padding: "10px 14px" },
     modeToggle: { display: "flex", gap: 4, background: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 4, marginBottom: 16 },
-    // Final score layout
     grid2: { display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0,1fr))" },
     bigNum: { fontSize: 56, fontWeight: 1200, letterSpacing: 0, lineHeight: 1 },
     stepBtn: { width: 52, height: 52, borderRadius: 14, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, fontSize: 26, fontWeight: 1000, cursor: "pointer" },
@@ -372,6 +386,48 @@ export default function OrganiserPage() {
   const deuceCardStyle = (active: boolean): React.CSSProperties => ({ borderRadius: 12, padding: "10px 14px", cursor: "pointer", display: "grid", gap: 2, border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.10)", background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)" });
 
   if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading...</div></div></div>;
+
+  // ── PIN recovery screen ────────────────────────────────────────────────────
+  if (!deviceId) {
+    return (
+      <div style={st.page}>
+        <div style={{ ...st.card, maxWidth: 420 }}>
+          <div style={st.row}>
+            <div>
+              <div style={st.title}>Organiser · {code}</div>
+              <div style={st.sub}>Enter your organiser PIN to rejoin</div>
+            </div>
+            <button style={st.btn} onClick={() => router.push("/")}>Home</button>
+          </div>
+          <div style={st.divider} />
+          <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.7, lineHeight: 1.6, marginBottom: 16 }}>
+            Your organiser session was not found on this device. Enter the 4-digit PIN you received when you created session <strong style={{ color: ORANGE }}>{code}</strong>.
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <input
+              style={{ flex: 1, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.18)", borderRadius: 12, padding: "14px 16px", fontSize: 28, fontWeight: 1100, outline: "none", textAlign: "center" as const, letterSpacing: 8, boxSizing: "border-box" as const }}
+              value={pinInput}
+              placeholder="0000"
+              inputMode="numeric"
+              maxLength={4}
+              onChange={(e) => { setPinError(""); setPinInput(e.target.value.replace(/[^\d]/g, "").slice(0, 4)); }}
+              onKeyDown={(e) => { if (e.key === "Enter") submitPin(); }}
+              autoFocus
+            />
+            <button
+              style={{ ...st.btnOrange, padding: "14px 20px", fontSize: 15, opacity: pinInput.length === 4 && !pinLoading ? 1 : 0.4 }}
+              onClick={submitPin}
+              disabled={pinInput.length !== 4 || pinLoading}
+            >
+              {pinLoading ? "Checking..." : "Enter"}
+            </button>
+          </div>
+          {pinError && <div style={st.errorBox}>{pinError}</div>}
+        </div>
+      </div>
+    );
+  }
+
   if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading session...{sessionError && " — " + sessionError}</div></div></div>;
 
   const nameById = session.players.reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
@@ -503,8 +559,7 @@ export default function OrganiserPage() {
     const settingsSummary = tp.sets === 1 ? "1 set" : "Best of " + tp.sets;
     const liveHeaderTitle = tennisState.matchOver && tennisState.winner ? (tennisState.winner === "A" ? teamAPlayers.join(" & ") : teamBPlayers.join(" & ")) + " win!" : tennisState.isTiebreak ? (tennisState.tiebreakTarget === 10 ? "Super Tiebreak" : "Tiebreak") : "Set " + (tennisState.setIndex + 1);
 
-    // ── Final score derived values ─────────────────────────────────────────
-    const currentSetIdx = orgSetLog.length; // 0-based index of current set being played
+    const currentSetIdx = orgSetLog.length;
     const maxGames = getMaxGames(tp, currentSetIdx);
     const detectedSetWinner = detectSetWinner(orgFinalGamesA, orgFinalGamesB, tp, currentSetIdx);
     const gameScoreValid = isGameScoreValid(orgFinalGamesA, orgFinalGamesB, tp, currentSetIdx);
@@ -512,16 +567,16 @@ export default function OrganiserPage() {
     const isSuperTBSet = isFinalSetSuperTBForScore(currentSetIdx, tp);
     const maxSetsPerTeam = setsToWin(tp.sets);
     const totalSetsPlayed = orgFinalSetsA + orgFinalSetsB;
-    // Cap set steppers
     const canIncrSetsA = orgFinalSetsA < maxSetsPerTeam && totalSetsPlayed < tp.sets;
     const canIncrSetsB = orgFinalSetsB < maxSetsPerTeam && totalSetsPlayed < tp.sets;
     const setLabel = currentSetIdx === tp.sets - 1 && isSuperTBSet ? "Super Tiebreak" : `Set ${currentSetIdx + 1}`;
     const gameUnit = isSuperTBSet ? "points" : "games";
+    const matchIsOver = orgFinalSetsA >= maxSetsPerTeam || orgFinalSetsB >= maxSetsPerTeam;
+    const matchWinnerTeam: TTeam | null = orgFinalSetsA >= maxSetsPerTeam ? "A" : orgFinalSetsB >= maxSetsPerTeam ? "B" : null;
 
     return (
       <div style={st.page}><div style={{ ...st.card, maxWidth: 760 }}>
 
-        {/* Header */}
         <div style={{ background: NAVY, borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" as const }}>
             <div>
@@ -543,7 +598,6 @@ export default function OrganiserPage() {
           </div>
         </div>
 
-        {/* Settings panel */}
         {showSettings && (
           <div style={st.settingsPanel}>
             <div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>Match rules — changes take effect immediately</div>
@@ -557,72 +611,79 @@ export default function OrganiserPage() {
           </div>
         )}
 
-        {/* Mode toggle */}
         <div style={st.modeToggle}>
           <button style={modeTabStyle(orgScoringMode === "final")} onClick={() => setOrgScoringMode("final")}>Final score</button>
           <button style={modeTabStyle(orgScoringMode === "live")} onClick={() => setOrgScoringMode("live")}>Live scoring</button>
         </div>
 
-        {/* ════════════ FINAL SCORE MODE ════════════ */}
         {orgScoringMode === "final" && (
           <>
-            {/* ── SECTION 1: GAMES ───────────────────── */}
-            <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginBottom: 10 }}>
-              {setLabel} — {gameUnit}
-              {isSuperTBSet && <span style={{ color: ORANGE, marginLeft: 8, opacity: 1 }}>Super Tiebreak</span>}
-            </div>
-
-            <div style={st.grid2}>
-              {/* Team A games */}
-              <div>
-                <div style={st.teamLabel}>Team A · {a1n} &amp; {a2n}</div>
-                <div style={st.scoreRow}>
-                  <button style={{ ...st.stepBtn, opacity: orgFinalGamesA === 0 ? 0.35 : 1 }} onClick={() => setOrgFinalGamesA((v) => Math.max(0, v - 1))} disabled={orgFinalGamesA === 0}>−</button>
-                  <div style={{ ...st.bigNum, color: detectedSetWinner === "A" ? GREEN : WHITE }}>{orgFinalGamesA}</div>
-                  <button style={{ ...st.stepBtn, opacity: orgFinalGamesA >= maxGames ? 0.35 : 1 }} onClick={() => setOrgFinalGamesA((v) => Math.min(maxGames, v + 1))} disabled={orgFinalGamesA >= maxGames}>+</button>
+            {/* ── Match winner banner ── */}
+            {matchIsOver && matchWinnerTeam && (
+              <div style={{ marginBottom: 16, borderRadius: 16, padding: "16px 20px", background: "rgba(0,200,80,0.10)", border: "1px solid rgba(0,200,80,0.35)", textAlign: "center" as const }}>
+                <div style={{ fontSize: 20, fontWeight: 1100, color: GREEN }}>
+                  🏆 Team {matchWinnerTeam} wins! ({orgFinalSetsA}–{orgFinalSetsB} sets)
                 </div>
-              </div>
-              {/* Team B games */}
-              <div>
-                <div style={st.teamLabel}>Team B · {b1n} &amp; {b2n}</div>
-                <div style={st.scoreRow}>
-                  <button style={{ ...st.stepBtn, opacity: orgFinalGamesB === 0 ? 0.35 : 1 }} onClick={() => setOrgFinalGamesB((v) => Math.max(0, v - 1))} disabled={orgFinalGamesB === 0}>−</button>
-                  <div style={{ ...st.bigNum, color: detectedSetWinner === "B" ? GREEN : WHITE }}>{orgFinalGamesB}</div>
-                  <button style={{ ...st.stepBtn, opacity: orgFinalGamesB >= maxGames ? 0.35 : 1 }} onClick={() => setOrgFinalGamesB((v) => Math.min(maxGames, v + 1))} disabled={orgFinalGamesB >= maxGames}>+</button>
-                </div>
-              </div>
-            </div>
-
-            {/* Auto-detected winner banner */}
-            {detectedSetWinner && (
-              <div style={st.gameWinnerBanner}>
-                <div style={{ fontSize: 14, fontWeight: 1000, color: GREEN }}>
-                  ✓ Team {detectedSetWinner} wins {setLabel} ({orgFinalGamesA}–{orgFinalGamesB})
-                </div>
-                <button style={st.confirmSetBtn} onClick={() => orgConfirmSet(detectedSetWinner)}>
-                  Confirm {setLabel}
-                </button>
+                <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6, color: WARM_WHITE }}>Submit the result below.</div>
               </div>
             )}
 
-            {/* Invalid score warning */}
-            {gameScoreNonZero && !detectedSetWinner && !gameScoreValid && (
-              <div style={st.gameWarnBanner}>
-                ⚠ {orgFinalGamesA}–{orgFinalGamesB} is not a valid {isSuperTBSet ? "super tiebreak score (first to 10, win by 2)" : "game score (max 7-6 or 7-5)"}
-              </div>
+            {/* ── Games entry — hidden once match is decided ── */}
+            {!matchIsOver && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginBottom: 10 }}>
+                  {setLabel} — {gameUnit}
+                  {isSuperTBSet && <span style={{ color: ORANGE, marginLeft: 8, opacity: 1 }}>Super Tiebreak</span>}
+                </div>
+
+                <div style={st.grid2}>
+                  <div>
+                    <div style={st.teamLabel}>Team A · {a1n} &amp; {a2n}</div>
+                    <div style={st.scoreRow}>
+                      <button style={{ ...st.stepBtn, opacity: orgFinalGamesA === 0 ? 0.35 : 1 }} onClick={() => setOrgFinalGamesA((v) => Math.max(0, v - 1))} disabled={orgFinalGamesA === 0}>−</button>
+                      <div style={{ ...st.bigNum, color: detectedSetWinner === "A" ? GREEN : WHITE }}>{orgFinalGamesA}</div>
+                      <button style={{ ...st.stepBtn, opacity: orgFinalGamesA >= maxGames ? 0.35 : 1 }} onClick={() => setOrgFinalGamesA((v) => Math.min(maxGames, v + 1))} disabled={orgFinalGamesA >= maxGames}>+</button>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={st.teamLabel}>Team B · {b1n} &amp; {b2n}</div>
+                    <div style={st.scoreRow}>
+                      <button style={{ ...st.stepBtn, opacity: orgFinalGamesB === 0 ? 0.35 : 1 }} onClick={() => setOrgFinalGamesB((v) => Math.max(0, v - 1))} disabled={orgFinalGamesB === 0}>−</button>
+                      <div style={{ ...st.bigNum, color: detectedSetWinner === "B" ? GREEN : WHITE }}>{orgFinalGamesB}</div>
+                      <button style={{ ...st.stepBtn, opacity: orgFinalGamesB >= maxGames ? 0.35 : 1 }} onClick={() => setOrgFinalGamesB((v) => Math.min(maxGames, v + 1))} disabled={orgFinalGamesB >= maxGames}>+</button>
+                    </div>
+                  </div>
+                </div>
+
+                {detectedSetWinner && (
+                  <div style={st.gameWinnerBanner}>
+                    <div style={{ fontSize: 14, fontWeight: 1000, color: GREEN }}>
+                      ✓ Team {detectedSetWinner} wins {setLabel} ({orgFinalGamesA}–{orgFinalGamesB})
+                    </div>
+                    <button style={st.confirmSetBtn} onClick={() => orgConfirmSet(detectedSetWinner)}>
+                      Confirm {setLabel}
+                    </button>
+                  </div>
+                )}
+
+                {gameScoreNonZero && !detectedSetWinner && !gameScoreValid && (
+                  <div style={st.gameWarnBanner}>
+                    ⚠ {orgFinalGamesA}–{orgFinalGamesB} is not a valid {isSuperTBSet ? "super tiebreak score (first to 10, win by 2)" : "game score (max 7-6 or 7-5)"}
+                  </div>
+                )}
+
+                {gameScoreNonZero && !detectedSetWinner && gameScoreValid && (orgFinalGamesA !== orgFinalGamesB) && (
+                  <div style={{ marginTop: 10, textAlign: "center" as const }}>
+                    <button style={{ borderRadius: 12, padding: "10px 18px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.06)", color: WHITE }}
+                      onClick={() => { const w = orgFinalGamesA > orgFinalGamesB ? "A" : "B"; orgConfirmSet(w); }}>
+                      Manually complete {setLabel}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
 
-            {/* Manual complete set hint (valid partial score) */}
-            {gameScoreNonZero && !detectedSetWinner && gameScoreValid && (orgFinalGamesA !== orgFinalGamesB) && (
-              <div style={{ marginTop: 10, textAlign: "center" as const }}>
-                <button style={{ borderRadius: 12, padding: "10px 18px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.06)", color: WHITE }}
-                  onClick={() => { const w = orgFinalGamesA > orgFinalGamesB ? "A" : "B"; orgConfirmSet(w); }}>
-                  Manually complete {setLabel}
-                </button>
-              </div>
-            )}
-
-            {/* ── SECTION 2: SETS ────────────────────── */}
+            {/* ── Sets ── */}
             <div style={st.sectionDivider} />
 
             <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 1.4, opacity: 0.45, textTransform: "uppercase" as const, marginBottom: 6 }}>
@@ -658,7 +719,6 @@ export default function OrganiserPage() {
               </div>
             </div>
 
-            {/* Set log */}
             {orgSetLog.length > 0 && (
               <div style={{ marginTop: 8, display: "grid", gap: 2 }}>
                 {orgSetLog.map((s, i) => <div key={i} style={st.setLogItem}>Set {i + 1}: {s.gamesA}–{s.gamesB} · {s.gamesA > s.gamesB ? "Team A won" : "Team B won"}</div>)}
@@ -675,7 +735,6 @@ export default function OrganiserPage() {
           </>
         )}
 
-        {/* ════════════ LIVE SCORING MODE ════════════ */}
         {orgScoringMode === "live" && (
           <>
             {isStarPointMoment && <div style={st.starPointBanner}>Star Point — next point wins the game</div>}

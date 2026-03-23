@@ -8,6 +8,7 @@ const NAVY = "#0D1B2A";
 const WHITE = "#FFFFFF";
 const ORANGE = "#FF6B00";
 const WARM_WHITE = "#F5F5F5";
+const GREEN = "#00C851";
 
 type Format = "SINGLE" | "MIXED" | "TEAM";
 type DeuceMode = "star" | "golden" | "traditional";
@@ -39,6 +40,11 @@ export default function NewSessionPage() {
   const [superTiebreak, setSuperTiebreak] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // ── PIN confirmation state ─────────────────────────────────────────────────
+  const [createdPin, setCreatedPin] = useState<string | null>(null);
+  const [createdCode, setCreatedCode] = useState<string | null>(null);
+  const [pinCopied, setPinCopied] = useState(false);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 600);
@@ -102,11 +108,19 @@ export default function NewSessionPage() {
       localStorage.setItem("eps_join_" + data.code, JSON.stringify({ deviceId: ddata.deviceId, isOrganiser: true }));
       localStorage.setItem("eps_pin_" + data.code, data.organiserPin);
 
-      router.push("/session/" + data.code + "/organiser");
+      // Show PIN confirmation screen before navigating
+      setCreatedPin(data.organiserPin);
+      setCreatedCode(data.code);
+      setLoading(false);
     } catch {
       setError("Network error.");
       setLoading(false);
     }
+  }
+
+  async function copyPin() {
+    if (!createdPin) return;
+    try { await navigator.clipboard.writeText(createdPin); setPinCopied(true); setTimeout(() => setPinCopied(false), 2500); } catch { }
   }
 
   const st: Record<string, React.CSSProperties> = {
@@ -124,7 +138,6 @@ export default function NewSessionPage() {
     settingBox: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 14 },
     settingLabel: { fontSize: 12, opacity: 0.55, fontWeight: 900, marginBottom: 10 },
     stepper: { display: "flex", alignItems: "center", gap: 14 },
-    // ── Swapped: + on left, − on right ──────────────────────────────────────
     stepBtn: { width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE, fontSize: 20, fontWeight: 1000, cursor: "pointer" },
     stepVal: { fontSize: 22, fontWeight: 1100, minWidth: 36, textAlign: "center" as const },
     slotGrid: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 },
@@ -172,6 +185,44 @@ export default function NewSessionPage() {
   });
 
   const effectiveMaxTeams = Math.max(maxTeams, minTeams);
+
+  // ── PIN confirmation screen ────────────────────────────────────────────────
+  if (createdPin && createdCode) {
+    return (
+      <div style={st.page}>
+        <div style={{ ...st.card, maxWidth: 420 }}>
+          <div style={{ textAlign: "center" as const, padding: "8px 0 4px" }}>
+            <div style={{ fontSize: 13, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.4, marginBottom: 10 }}>Session created</div>
+            <div style={{ fontSize: 48, fontWeight: 1200, color: ORANGE, letterSpacing: 6, lineHeight: 1 }}>{createdCode}</div>
+            <div style={{ fontSize: 13, opacity: 0.55, marginTop: 6, color: WARM_WHITE }}>Share this code with your players</div>
+          </div>
+
+          <div style={st.divider} />
+
+          <div style={{ borderRadius: 18, padding: 20, background: "rgba(255,107,0,0.08)", border: "1px solid rgba(255,107,0,0.30)", textAlign: "center" as const }}>
+            <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.4, marginBottom: 12 }}>Your organiser PIN</div>
+            <div style={{ fontSize: 64, fontWeight: 1200, letterSpacing: 12, color: WHITE, lineHeight: 1, marginBottom: 16 }}>{createdPin}</div>
+            <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.7, lineHeight: 1.6, marginBottom: 16 }}>
+              Save this PIN. You will need it to rejoin the organiser view if you switch devices or clear your browser.
+            </div>
+            <button
+              style={{ borderRadius: 14, padding: "12px 24px", fontSize: 14, fontWeight: 1000, cursor: "pointer", border: "1px solid rgba(255,255,255,0.20)", background: pinCopied ? "rgba(0,200,80,0.15)" : "rgba(255,255,255,0.08)", color: pinCopied ? GREEN : WHITE, borderColor: pinCopied ? "rgba(0,200,80,0.45)" : "rgba(255,255,255,0.20)" }}
+              onClick={copyPin}
+            >
+              {pinCopied ? "✓ Copied!" : "Copy PIN"}
+            </button>
+          </div>
+
+          <button
+            style={{ ...st.btnPrimary, marginTop: 16 }}
+            onClick={() => router.push("/session/" + createdCode + "/organiser")}
+          >
+            Got it — open session →
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={st.page}>
@@ -263,7 +314,6 @@ export default function NewSessionPage() {
             <div style={st.settingsGrid}>
               <div style={st.settingBox}>
                 <div style={st.settingLabel}>Courts</div>
-                {/* ── + on left, − on right ── */}
                 <div style={st.stepper}>
                   <button style={st.stepBtn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
                   <div style={st.stepVal}>{courts}</div>

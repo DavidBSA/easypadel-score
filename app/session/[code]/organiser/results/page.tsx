@@ -11,6 +11,12 @@ const WARM_WHITE = "#F5F5F5";
 const GREEN = "#00C851";
 const RED = "#FF4040";
 
+type DeuceMode = "star" | "golden" | "traditional";
+type MatchRules = { deuceMode: DeuceMode; tiebreak: boolean; superTiebreak: boolean };
+type TennisPayload = { sets: number; rules: MatchRules };
+
+function setsToWin(n: number) { return Math.ceil(n / 2); }
+
 type Player = { id: string; name: string };
 type Match = {
   id: string; queuePosition: number; courtNumber: number | null;
@@ -32,8 +38,9 @@ export default function ResultsPage() {
   const [bootstrapped, setBootstrapped] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState("");
+  const [tennisPayload, setTennisPayload] = useState<TennisPayload | null>(null);
 
-  // Edit state: matchId → { pA, pB } | null
+  // Edit state
   const [editing, setEditing] = useState<Record<string, { pA: number; pB: number } | null>>({});
   const [saveLoading, setSaveLoading] = useState<string | null>(null);
   const [saveFlash, setSaveFlash] = useState<string | null>(null);
@@ -42,44 +49,36 @@ export default function ResultsPage() {
     if (!code) return;
     try {
       const stored = localStorage.getItem(`eps_join_${code}`);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.isOrganiser && parsed.deviceId) setDeviceId(parsed.deviceId);
-      }
-    } catch { /* ignore */ }
+      if (stored) { const p = JSON.parse(stored); if (p.isOrganiser && p.deviceId) setDeviceId(p.deviceId); }
+    } catch { }
+    try {
+      const rules = localStorage.getItem(`eps_match_rules_${code}`);
+      if (rules) setTennisPayload(JSON.parse(rules));
+    } catch { }
     setBootstrapped(true);
   }, [code]);
 
   useEffect(() => {
     if (!deviceId || !code) return;
-    fetch(`/api/sessions/${code}`)
-      .then((r) => r.json())
-      .then(setSession)
-      .catch(() => setError("Failed to load session."));
+    fetch(`/api/sessions/${code}`).then((r) => r.json()).then(setSession).catch(() => setError("Failed to load session."));
   }, [deviceId, code]);
 
   async function saveEdit(matchId: string) {
     if (!deviceId) return;
-    const edit = editing[matchId];
-    if (!edit) return;
+    const edit = editing[matchId]; if (!edit) return;
     setSaveLoading(matchId);
     try {
       const r = await fetch(`/api/matches/${matchId}/score`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, pointsA: edit.pA, pointsB: edit.pB }),
       });
       if (r.ok) {
-        // Refresh session data
         const updated = await fetch(`/api/sessions/${code}`).then((r) => r.json());
         setSession(updated);
         setEditing((prev) => ({ ...prev, [matchId]: null }));
         setSaveFlash(matchId);
         setTimeout(() => setSaveFlash(null), 2000);
-      } else {
-        const d = await r.json();
-        setError(d.error ?? "Save failed.");
-      }
+      } else { const d = await r.json(); setError(d.error ?? "Save failed."); }
     } catch { setError("Network error."); }
     setSaveLoading(null);
   }
@@ -108,7 +107,6 @@ export default function ResultsPage() {
         <div style={{ ...st.card, maxWidth: 420, marginTop: 60 }}>
           <div style={st.title}>Access required</div>
           <div style={{ ...st.sub, marginBottom: 16 }}>You need organiser access to view results.</div>
-          {/* Bug 1 fix: correct path */}
           <button style={st.btnOrange} onClick={() => router.push(`/session/${code}/organiser`)}>← Organiser</button>
         </div>
       </div>
@@ -116,6 +114,11 @@ export default function ResultsPage() {
   }
 
   if (!session) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading results…{error && ` — ${error}`}</div></div></div>;
+
+  const isSingle = session.format === "SINGLE";
+  const tp: TennisPayload = tennisPayload ?? { sets: 1, rules: { deuceMode: "traditional", tiebreak: true, superTiebreak: false } };
+  const maxSetsPerTeam = setsToWin(tp.sets);
+  const totalSetsInMatch = tp.sets;
 
   const nameById = session.players.reduce<Record<string, string>>((m, p) => { m[p.id] = p.name; return m; }, {});
   const completed = session.matches
@@ -130,6 +133,16 @@ export default function ResultsPage() {
     return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
+  // SINGLE: describe score as "2–1 sets" with winner label
+  function singleScoreLabel(pA: number, pB: number): { winner: string; score: string; rules: string } {
+    const winner = pA > pB ? "Team A wins" : pB > pA ? "Team B wins" : "Draw";
+    const score = `${pA}–${pB} sets`;
+    const deuceLabel = tp.rules.deuceMode === "golden" ? "Golden point" : tp.rules.deuceMode === "star" ? "Star point" : "Traditional advantage";
+    const setLabel = tp.sets === 1 ? "1 set" : "Best of " + tp.sets;
+    const rules = `${setLabel} · ${deuceLabel}`;
+    return { winner, score, rules };
+  }
+
   return (
     <div style={st.page}>
       <div style={st.card}>
@@ -138,15 +151,12 @@ export default function ResultsPage() {
             <div style={st.title}>Match Results · {code}</div>
             <div style={st.sub}>{session.format} · {completed.length} completed match{completed.length !== 1 ? "es" : ""}</div>
           </div>
-          {/* Bug 1 fix: correct path */}
           <button style={st.btn} onClick={() => router.push(`/session/${code}/organiser`)}>← Organiser</button>
         </div>
 
         <div style={st.divider} />
         <div style={st.hint}>All confirmed match scores are listed below. Use Edit score to correct a result — the leaderboard updates immediately on all devices.</div>
-
         {error && <div style={st.errorBox}>{error}</div>}
-
         {completed.length === 0 && <div style={{ opacity: 0.55, fontWeight: 900 }}>No completed matches yet.</div>}
 
         {completed.map((m, idx) => {
@@ -156,6 +166,12 @@ export default function ResultsPage() {
           const isEditing = editing[m.id] != null;
           const edit = editing[m.id];
           const flashed = saveFlash === m.id;
+          const label = isSingle ? singleScoreLabel(pA, pB) : null;
+
+          // For SINGLE edit: cap each team's sets correctly
+          const editSetsTotal = edit ? edit.pA + edit.pB : 0;
+          const canIncrEditA = edit ? edit.pA < maxSetsPerTeam && editSetsTotal < totalSetsInMatch : false;
+          const canIncrEditB = edit ? edit.pB < maxSetsPerTeam && editSetsTotal < totalSetsInMatch : false;
 
           return (
             <div key={m.id} style={{ ...st.matchCard, borderColor: flashed ? "rgba(0,200,80,0.4)" : "rgba(255,255,255,0.08)" }}>
@@ -166,6 +182,10 @@ export default function ResultsPage() {
                   <span style={{ fontWeight: 1000, fontSize: 13, color: ORANGE }}>Match {idx + 1}</span>
                   {m.courtNumber && <span style={{ fontSize: 12, opacity: 0.5, marginLeft: 8 }}>Court {m.courtNumber}</span>}
                   {m.completedAt && <span style={{ fontSize: 12, opacity: 0.4, marginLeft: 8 }}>· {formatTime(m.completedAt)}</span>}
+                  {/* SINGLE: show match rules summary */}
+                  {isSingle && label && !isEditing && (
+                    <span style={{ fontSize: 11, opacity: 0.4, marginLeft: 8 }}>· {label.rules}</span>
+                  )}
                 </div>
                 {!isEditing && (
                   <button style={st.btn} onClick={() => setEditing((prev) => ({ ...prev, [m.id]: { pA, pB } }))}>
@@ -177,22 +197,37 @@ export default function ResultsPage() {
               {/* Score display or edit */}
               {isEditing && edit ? (
                 <div>
+                  {isSingle && (
+                    <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.45, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 12 }}>
+                      Sets won · max {maxSetsPerTeam} per team · {totalSetsInMatch} total
+                    </div>
+                  )}
                   {/* Team A edit row */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                    <div style={{ fontSize: 14, fontWeight: 950 }}>{a1} & {a2}</div>
+                    <div style={{ fontSize: 14, fontWeight: 950 }}>{a1} &amp; {a2}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <button style={st.stepBtn} onClick={() => setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pA: Math.max(0, edit.pA - 1) } }))}>−</button>
+                      <button style={{ ...st.stepBtn, opacity: edit.pA === 0 ? 0.35 : 1 }}
+                        onClick={() => setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pA: Math.max(0, edit.pA - 1) } }))}
+                        disabled={edit.pA === 0}>−</button>
                       <span style={{ fontSize: 24, fontWeight: 1100, minWidth: 32, textAlign: "center" as const }}>{edit.pA}</span>
-                      <button style={st.stepBtn} onClick={() => setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pA: edit.pA + 1 } }))}>+</button>
+                      <button
+                        style={{ ...st.stepBtn, opacity: (isSingle && !canIncrEditA) ? 0.35 : 1 }}
+                        onClick={() => { if (!isSingle || canIncrEditA) setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pA: edit.pA + 1 } })); }}
+                        disabled={isSingle && !canIncrEditA}>+</button>
                     </div>
                   </div>
                   {/* Team B edit row */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                    <div style={{ fontSize: 14, fontWeight: 950 }}>{b1} & {b2}</div>
+                    <div style={{ fontSize: 14, fontWeight: 950 }}>{b1} &amp; {b2}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <button style={st.stepBtn} onClick={() => setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pB: Math.max(0, edit.pB - 1) } }))}>−</button>
+                      <button style={{ ...st.stepBtn, opacity: edit.pB === 0 ? 0.35 : 1 }}
+                        onClick={() => setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pB: Math.max(0, edit.pB - 1) } }))}
+                        disabled={edit.pB === 0}>−</button>
                       <span style={{ fontSize: 24, fontWeight: 1100, minWidth: 32, textAlign: "center" as const }}>{edit.pB}</span>
-                      <button style={st.stepBtn} onClick={() => setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pB: edit.pB + 1 } }))}>+</button>
+                      <button
+                        style={{ ...st.stepBtn, opacity: (isSingle && !canIncrEditB) ? 0.35 : 1 }}
+                        onClick={() => { if (!isSingle || canIncrEditB) setEditing((prev) => ({ ...prev, [m.id]: { ...edit, pB: edit.pB + 1 } })); }}
+                        disabled={isSingle && !canIncrEditB}>+</button>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -204,27 +239,57 @@ export default function ResultsPage() {
                 </div>
               ) : (
                 /* Score display */
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontSize: 12, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team A</div>
-                    <div style={{ fontSize: 14, fontWeight: 950 }}>{a1}</div>
-                    <div style={{ fontSize: 14, fontWeight: 950 }}>{a2}</div>
-                  </div>
-                  <div style={{ textAlign: "center" as const, padding: "0 8px" }}>
-                    <div style={{ fontSize: 34, fontWeight: 1150, lineHeight: 1.1 }}>
-                      <span style={{ color: pA > pB ? GREEN : pA < pB ? RED : WHITE }}>{pA}</span>
+                isSingle && label ? (
+                  // ── SINGLE: sets-based layout ─────────────────────────────
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 12, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team A</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{a1}</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{a2}</div>
                     </div>
-                    <div style={{ fontSize: 16, opacity: 0.3, margin: "2px 0" }}>—</div>
-                    <div style={{ fontSize: 34, fontWeight: 1150, lineHeight: 1.1 }}>
-                      <span style={{ color: pB > pA ? GREEN : pB < pA ? RED : WHITE }}>{pB}</span>
+                    <div style={{ textAlign: "center" as const, padding: "0 8px" }}>
+                      {/* Sets score — large numbers with label */}
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, justifyContent: "center" }}>
+                        <span style={{ fontSize: 40, fontWeight: 1200, lineHeight: 1, color: pA > pB ? GREEN : pA < pB ? RED : WHITE }}>{pA}</span>
+                        <span style={{ fontSize: 20, opacity: 0.3, fontWeight: 900 }}>–</span>
+                        <span style={{ fontSize: 40, fontWeight: 1200, lineHeight: 1, color: pB > pA ? GREEN : pB < pA ? RED : WHITE }}>{pB}</span>
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.45, textTransform: "uppercase" as const, letterSpacing: 1, marginTop: 4 }}>sets</div>
+                      {/* Winner label */}
+                      <div style={{ marginTop: 8, fontSize: 12, fontWeight: 1000, color: pA !== pB ? (pA > pB ? GREEN : RED) : WARM_WHITE }}>
+                        {label.winner}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" as const }}>
+                      <div style={{ fontSize: 12, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team B</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{b1}</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{b2}</div>
                     </div>
                   </div>
-                  <div style={{ textAlign: "right" as const }}>
-                    <div style={{ fontSize: 12, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team B</div>
-                    <div style={{ fontSize: 14, fontWeight: 950 }}>{b1}</div>
-                    <div style={{ fontSize: 14, fontWeight: 950 }}>{b2}</div>
+                ) : (
+                  // ── AMERICANO / TEAM: points layout (unchanged) ───────────
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 12, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team A</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{a1}</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{a2}</div>
+                    </div>
+                    <div style={{ textAlign: "center" as const, padding: "0 8px" }}>
+                      <div style={{ fontSize: 34, fontWeight: 1150, lineHeight: 1.1 }}>
+                        <span style={{ color: pA > pB ? GREEN : pA < pB ? RED : WHITE }}>{pA}</span>
+                      </div>
+                      <div style={{ fontSize: 16, opacity: 0.3, margin: "2px 0" }}>—</div>
+                      <div style={{ fontSize: 34, fontWeight: 1150, lineHeight: 1.1 }}>
+                        <span style={{ color: pB > pA ? GREEN : pB < pA ? RED : WHITE }}>{pB}</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" as const }}>
+                      <div style={{ fontSize: 12, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team B</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{b1}</div>
+                      <div style={{ fontSize: 14, fontWeight: 950 }}>{b2}</div>
+                    </div>
                   </div>
-                </div>
+                )
               )}
             </div>
           );

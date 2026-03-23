@@ -114,33 +114,18 @@ export async function POST(
       where: { matchId: id },
     });
 
-    // Only one submission so far — mark PENDING, wait for second
-    if (allSubmissions.length < 2) {
-      await prisma.$transaction([
-        prisma.match.update({
-          where: { id },
-          data: { scoreStatus: "PENDING" },
-        }),
-        prisma.session.update({
-          where: { id: match.sessionId },
-          data: { updatedAt: new Date() },
-        }),
-      ]);
-      return NextResponse.json({ result: "PENDING" });
-    }
+    // First submission auto-confirms immediately — no second submission required.
+    // If a second submission arrives with a different score, it becomes a conflict
+    // for the organiser to resolve.
+    const firstSubmission = allSubmissions[0];
 
-    // Two or more submissions — check if they agree
-    const [first, second] = allSubmissions;
-    const scoresAgree = first.pointsA === second.pointsA && first.pointsB === second.pointsB;
-
-    if (scoresAgree) {
-      // Confirmed — complete the match and auto-assign next
+    if (allSubmissions.length === 1) {
       const [updated] = await prisma.$transaction([
         prisma.match.update({
           where: { id },
           data: {
-            pointsA: first.pointsA,
-            pointsB: first.pointsB,
+            pointsA: firstSubmission.pointsA,
+            pointsB: firstSubmission.pointsB,
             scoreStatus: "CONFIRMED",
             status: "COMPLETE",
             completedAt: new Date(),
@@ -153,8 +138,16 @@ export async function POST(
       ]);
       if (match.courtNumber) await autoAssignNextMatch(match.sessionId, match.courtNumber);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
+    }
+
+    // Second or subsequent submission — check against the confirmed score
+    const [first, second] = allSubmissions;
+    const scoresAgree = first.pointsA === second.pointsA && first.pointsB === second.pointsB;
+
+    if (scoresAgree) {
+      return NextResponse.json({ result: "CONFIRMED" });
     } else {
-      // Conflict — flag for organiser to resolve
+      // Scores disagree — flag conflict for organiser
       await prisma.$transaction([
         prisma.match.update({
           where: { id },
