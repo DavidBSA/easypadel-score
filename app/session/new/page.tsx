@@ -38,6 +38,11 @@ export default function NewSessionPage() {
   const [deuceMode, setDeuceMode] = useState<DeuceMode>("star");
   const [tiebreak, setTiebreak] = useState(true);
   const [superTiebreak, setSuperTiebreak] = useState(true);
+  const [scheduledDate, setScheduledDate] = useState<string>(() => {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  });
+  const [scheduledTime, setScheduledTime] = useState("09:00");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -85,6 +90,7 @@ export default function NewSessionPage() {
           pointsPerMatch: isSingle ? 0 : pointsPerMatch,
           servesPerRotation: isSingle ? null : 4,
           maxPlayers: isSingle ? 4 : slotMode === "fixed" ? Math.max(maxPlayersForAPI, minSlotsForAPI) : null,
+          scheduledAt: scheduledDate && scheduledTime ? new Date(scheduledDate + "T" + scheduledTime).toISOString() : null,
         }),
       });
       const data = await r.json();
@@ -251,6 +257,29 @@ export default function NewSessionPage() {
             <div style={{ fontSize: 11, opacity: 0.55, marginTop: isMobile ? 0 : 4 }}>Fixed partners</div>
           </div>
         </div>
+
+        <div style={st.sectionLabel}>Session date &amp; time</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div style={st.settingBox}>
+            <div style={st.settingLabel}>Date</div>
+            <input
+              type="date"
+              value={scheduledDate}
+              onChange={(e) => setScheduledDate(e.target.value)}
+              style={{ background: "transparent", border: "none", color: WHITE, fontSize: 16, fontWeight: 1000, width: "100%", outline: "none", colorScheme: "dark" }}
+            />
+          </div>
+          <div style={st.settingBox}>
+            <div style={st.settingLabel}>Start time</div>
+            <input
+              type="time"
+              value={scheduledTime}
+              onChange={(e) => setScheduledTime(e.target.value)}
+              style={{ background: "transparent", border: "none", color: WHITE, fontSize: 16, fontWeight: 1000, width: "100%", outline: "none", colorScheme: "dark" }}
+            />
+          </div>
+        </div>
+        <div style={st.small}>Shown to players on their invite link and lobby screen.</div>
 
         <div style={st.divider} />
 

@@ -96,13 +96,14 @@ function getScoreDisplay(s: TSnap): { a: string; b: string } { if (s.isTiebreak)
 type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number; submittedAt: string };
 type Match = { id: string; queuePosition: number; courtNumber: number | null; status: "PENDING" | "IN_PROGRESS" | "COMPLETE"; teamAPlayer1: string; teamAPlayer2: string; teamBPlayer1: string; teamBPlayer2: string; pointsA: number | null; pointsB: number | null; scoreStatus: "PENDING" | "CONFIRMED" | "CONFLICT" | null; scoreSubmissions: ScoreSubmission[]; startedAt: string | null; completedAt: string | null; };
-type Session = { id: string; code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; players: Player[]; matches: Match[]; createdAt: string; };
+type Session = { id: string; code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; players: Player[]; matches: Match[]; createdAt: string; scheduledAt: string | null; };
 type LeaderRow = { playerId: string; name: string; played: number; wins: number; draws: number; losses: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type CourtScore = { rawA: string };
 type OrgScoringMode = "final" | "live";
 
 function formatLabel(f: "SINGLE" | "MIXED" | "TEAM"): string { if (f === "SINGLE") return "Single Match"; if (f === "MIXED") return "Mixed Americano"; return "Team Americano"; }
 function formatSessionDateTime(iso: string): string { try { const d = new Date(iso); return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) + " · " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } }
+function formatScheduled(iso: string): string { try { const d = new Date(iso); return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) + " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); } catch { return ""; } }
 
 function pill(label: string, bg: string, border: string, onClick?: () => void): React.ReactNode {
   return <span onClick={onClick} style={{ display: "inline-block", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 1000, background: bg, border: "1px solid " + border, color: WHITE, cursor: onClick ? "pointer" : "default" }}>{label}</span>;
@@ -298,7 +299,7 @@ export default function OrganiserPage() {
   function tennisRandomServer() { const t: TTeam = Math.random() < 0.5 ? "A" : "B"; const a: 0 | 1 = Math.random() < 0.5 ? 0 : 1; const b: 0 | 1 = Math.random() < 0.5 ? 0 : 1; setTennisHistory((h) => [...h, tennisState]); setTennisState((prev) => ({ ...prev, servingTeam: t, nextServerA: a, nextServerB: b })); }
 
   function getJoinUrl() { return typeof window !== "undefined" ? window.location.origin + "/join?code=" + code : "/join?code=" + code; }
-  async function shareLink() { const url = getJoinUrl(); if (typeof navigator !== "undefined" && navigator.share) { try { await navigator.share({ title: "Join my padel session", text: "Join EasyPadelScore — code: " + code, url }); setShareStatus("shared"); setTimeout(() => setShareStatus("idle"), 2500); return; } catch (err: unknown) { if (err instanceof Error && err.name === "AbortError") return; } } try { await navigator.clipboard.writeText(url); setShareStatus("copied"); setTimeout(() => setShareStatus("idle"), 2500); } catch { } }
+  async function shareLink() { const url = getJoinUrl(); const fLabel = session?.format === "SINGLE" ? "Single Match" : session?.format === "MIXED" ? "Mixed Americano" : "Team Americano"; const dateText = session?.scheduledAt ? " — " + formatScheduled(session.scheduledAt) : ""; const shareText = "You're invited to a " + fLabel + dateText + ". Join with code: " + code; if (typeof navigator !== "undefined" && navigator.share) { try { await navigator.share({ title: "Join my padel session", text: shareText, url }); setShareStatus("shared"); setTimeout(() => setShareStatus("idle"), 2500); return; } catch (err: unknown) { if (err instanceof Error && err.name === "AbortError") return; } } try { await navigator.clipboard.writeText(url); setShareStatus("copied"); setTimeout(() => setShareStatus("idle"), 2500); } catch { } }
   async function shareQR() {
     const url = getJoinUrl(); const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=" + encodeURIComponent(url) + "&bgcolor=0D1B2A&color=FFFFFF&margin=16";
     if (typeof navigator !== "undefined" && navigator.share) {
@@ -447,7 +448,7 @@ export default function OrganiserPage() {
   const shareCard = session.status === "LOBBY" ? (
     <div style={st.shareCard}>
       <div style={st.shareTop}>
-        <div style={{ flex: 1, minWidth: 140 }}><div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 6 }}>Session code</div><div style={st.codeBlock}>{code}</div><div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Players join at <strong>/join</strong></div><div style={{ fontSize: 12, opacity: 0.45, marginTop: 4 }}>{formatSessionDateTime(session.createdAt)}</div></div>
+        <div style={{ flex: 1, minWidth: 140 }}><div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 6 }}>Session code</div><div style={st.codeBlock}>{code}</div><div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Players join at <strong>/join</strong></div>{session.scheduledAt ? <div style={{ fontSize: 13, fontWeight: 1000, color: ORANGE, marginTop: 6 }}>{formatScheduled(session.scheduledAt)}</div> : <div style={{ fontSize: 12, opacity: 0.45, marginTop: 4 }}>{formatSessionDateTime(session.createdAt)}</div>}</div>
         <div style={st.shareButtons}>
           <button style={{ ...st.btnShare, background: shareStatus !== "idle" ? "rgba(0,200,80,0.85)" : ORANGE }} onClick={shareLink}>{canWebShare ? "Share link" : "Copy link"}</button>
           <button style={{ ...st.btnShareSecondary, borderColor: showQR ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.20)", background: showQR ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.07)" }} onClick={() => setShowQR((v) => !v)}>QR {showQR ? "▲" : "▼"}</button>

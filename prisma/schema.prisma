@@ -41,6 +41,7 @@ model Session {
   pointsPerMatch     Int           @default(21)
   servesPerRotation  Int           @default(4)
   maxPlayers         Int?
+  scheduledAt        DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 

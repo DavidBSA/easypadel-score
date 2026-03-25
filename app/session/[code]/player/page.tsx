@@ -57,7 +57,7 @@ type Match = {
 type Session = {
   code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: string;
   courts: number; pointsPerMatch: number; servesPerRotation: number | null;
-  players: Player[]; matches: Match[];
+  players: Player[]; matches: Match[]; scheduledAt: string | null;
 };
 type LeaderRow = { playerId: string; name: string; played: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type ScoringMode = "final" | "live";
@@ -68,6 +68,7 @@ function formatLabel(f: "SINGLE" | "MIXED" | "TEAM"): string {
   if (f === "MIXED") return "Mixed Americano";
   return "Team Americano";
 }
+function formatScheduled(iso: string): string { try { const d = new Date(iso); return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) + " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); } catch { return ""; } }
 
 function serveDistribution(pts: number, spr: number): [number, number, number, number] {
   const base = Math.floor(pts / 4); const rem = pts % 4;
@@ -439,6 +440,11 @@ export default function PlayerPage() {
         <div style={statusBoxStyle(WARM_WHITE)}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>⏳</div>
           <div style={{ fontWeight: 1000, fontSize: 20 }}>{isSingle ? "Match starting soon" : "Waiting for court assignment"}</div>
+          {session?.scheduledAt && (
+            <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 10, background: "rgba(255,107,0,0.12)", border: "1px solid rgba(255,107,0,0.30)", fontSize: 14, fontWeight: 1000, color: "#FF6B00" }}>
+              {formatLabel(session.format)} · {formatScheduled(session.scheduledAt)}
+            </div>
+          )}
           <div style={{ opacity: 0.6, marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>{isSingle ? "You're in — the organiser will start the match shortly." : "Hang tight — you'll be assigned to a court shortly."}</div>
         </div>
         {upcomingBlock}
