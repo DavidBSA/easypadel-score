@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls c:/Users/David/Documents/Personal/EasyPadelScore/easypadel-score/app/session/[code]/)",
+      "Bash(ls c:/Users/David/Documents/Personal/EasyPadelScore/easypadel-score/app/session/[code]/organiser/)",
+      "Bash(ls c:/Users/David/Documents/Personal/EasyPadelScore/easypadel-score/app/api/sessions/[code]/)",
+      "Bash(grep -n \"ACTIVE\\\\|COMPLETE\\\\|session.status\" c:/Users/David/Documents/Personal/EasyPadelScore/easypadel-score/app/session/[code]/organiser/page.tsx)",
+      "Bash(grep -n \"formatSessionDateTime\\\\|createdAt\" c:/Users/David/Documents/Personal/EasyPadelScore/easypadel-score/app/session/[code]/organiser/page.tsx)"
+    ]
+  }
+}

@@ -96,12 +96,13 @@ function getScoreDisplay(s: TSnap): { a: string; b: string } { if (s.isTiebreak)
 type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number; submittedAt: string };
 type Match = { id: string; queuePosition: number; courtNumber: number | null; status: "PENDING" | "IN_PROGRESS" | "COMPLETE"; teamAPlayer1: string; teamAPlayer2: string; teamBPlayer1: string; teamBPlayer2: string; pointsA: number | null; pointsB: number | null; scoreStatus: "PENDING" | "CONFIRMED" | "CONFLICT" | null; scoreSubmissions: ScoreSubmission[]; startedAt: string | null; completedAt: string | null; };
-type Session = { id: string; code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; players: Player[]; matches: Match[]; };
+type Session = { id: string; code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; players: Player[]; matches: Match[]; createdAt: string; };
 type LeaderRow = { playerId: string; name: string; played: number; wins: number; draws: number; losses: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type CourtScore = { rawA: string };
 type OrgScoringMode = "final" | "live";
 
 function formatLabel(f: "SINGLE" | "MIXED" | "TEAM"): string { if (f === "SINGLE") return "Single Match"; if (f === "MIXED") return "Mixed Americano"; return "Team Americano"; }
+function formatSessionDateTime(iso: string): string { try { const d = new Date(iso); return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) + " · " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } }
 
 function pill(label: string, bg: string, border: string, onClick?: () => void): React.ReactNode {
   return <span onClick={onClick} style={{ display: "inline-block", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 1000, background: bg, border: "1px solid " + border, color: WHITE, cursor: onClick ? "pointer" : "default" }}>{label}</span>;
@@ -446,7 +447,7 @@ export default function OrganiserPage() {
   const shareCard = session.status === "LOBBY" ? (
     <div style={st.shareCard}>
       <div style={st.shareTop}>
-        <div style={{ flex: 1, minWidth: 140 }}><div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 6 }}>Session code</div><div style={st.codeBlock}>{code}</div><div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Players join at <strong>/join</strong></div></div>
+        <div style={{ flex: 1, minWidth: 140 }}><div style={{ fontSize: 11, fontWeight: 1000, opacity: 0.5, textTransform: "uppercase" as const, letterSpacing: 1.2, marginBottom: 6 }}>Session code</div><div style={st.codeBlock}>{code}</div><div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Players join at <strong>/join</strong></div><div style={{ fontSize: 12, opacity: 0.45, marginTop: 4 }}>{formatSessionDateTime(session.createdAt)}</div></div>
         <div style={st.shareButtons}>
           <button style={{ ...st.btnShare, background: shareStatus !== "idle" ? "rgba(0,200,80,0.85)" : ORANGE }} onClick={shareLink}>{canWebShare ? "Share link" : "Copy link"}</button>
           <button style={{ ...st.btnShareSecondary, borderColor: showQR ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.20)", background: showQR ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.07)" }} onClick={() => setShowQR((v) => !v)}>QR {showQR ? "▲" : "▼"}</button>
@@ -468,7 +469,7 @@ export default function OrganiserPage() {
 
     return (
       <div style={st.page}><div style={st.card}>
-        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div><div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div></div><button style={st.btn} onClick={() => router.push("/")}>Home</button></div>
+        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div><div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div><button style={st.btn} onClick={() => router.push("/")}>Home</button></div>
         <div style={st.pillsRow}>{pill(session.players.length + " joined", "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}{isSingle ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)") : pill(minPlayers + " needed to start", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}</div>
         {shareCard}
         {isSingle && <div style={{ marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.5 }}>Players can join using the session code above, or you can add them manually below.</div>}
@@ -586,6 +587,7 @@ export default function OrganiserPage() {
               {orgScoringMode === "live" && <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 }}>Sets {tennisState.setsA} - {tennisState.setsB} · Games {tennisState.gamesA} - {tennisState.gamesB}{inSuperFinalSet && !tennisState.matchOver ? " · Super tiebreak" : ""}</div>}
               {orgScoringMode === "live" && showServeHelper && !tennisState.matchOver && <div style={{ fontSize: 13, marginTop: 6, fontWeight: 1000, color: ORANGE }}>Serving: {currentServerName}</div>}
               {orgScoringMode === "final" && <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 4 }}>{settingsSummary} · {deuceLabel}</div>}
+              <div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div>
             </div>
             <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "flex-end", gap: 8 }}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, justifyContent: "flex-end" }}>
@@ -807,7 +809,7 @@ export default function OrganiserPage() {
   return (
     <div style={st.page}><div style={st.card}>
       <div style={st.row}>
-        <div><div style={st.title}>Organiser · {code}</div><div style={st.sub}>{subtitleParts.join(" · ")}</div></div>
+        <div><div style={st.title}>Organiser · {code}</div><div style={st.sub}>{subtitleParts.join(" · ")}</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           {session.status === "ACTIVE" && <button style={{ ...st.btnRed, opacity: inProgress.length > 0 ? 0.35 : 1 }} onClick={() => { if (inProgress.length === 0) { setEndConfirm(true); setEndError(""); } }} disabled={inProgress.length > 0}>End session</button>}
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>
