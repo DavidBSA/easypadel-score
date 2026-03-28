@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       data: { email, token, expiresAt, used: false },
     });
 
-    const magicLink = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/verify?token=${token}`;
+    const magicLink = `${process.env.APP_URL}/api/auth/verify?token=${token}`;
 
     await fetch("https://api.resend.com/emails", {
       method: "POST",
