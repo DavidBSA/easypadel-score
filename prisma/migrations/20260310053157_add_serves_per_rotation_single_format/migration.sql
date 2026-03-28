@@ -10,12 +10,17 @@ ALTER TYPE "SessionFormat" ADD VALUE 'SINGLE';
 -- AlterEnum
 ALTER TYPE "SessionStatus" ADD VALUE 'LOBBY';
 
+-- Must commit before using new enum values in PostgreSQL
+COMMIT;
+BEGIN;
+
 -- AlterTable
 ALTER TABLE "Device" ADD COLUMN     "playerId" TEXT;
 
 -- AlterTable
 ALTER TABLE "Session" ADD COLUMN     "maxPlayers" INTEGER,
 ADD COLUMN     "servesPerRotation" INTEGER NOT NULL DEFAULT 4,
+ADD COLUMN     "scheduledAt" TIMESTAMP(3),
 ALTER COLUMN "status" SET DEFAULT 'LOBBY';
 
 -- CreateIndex

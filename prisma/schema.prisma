@@ -121,3 +121,13 @@ model Device {
 
   @@index([sessionId])
 }
+
+model BugReport {
+  id          String    @id @default(cuid())
+  pageUrl     String
+  sessionCode String?
+  userNote    String?
+  status      String    @default("OPEN")
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+}
