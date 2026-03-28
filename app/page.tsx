@@ -18,6 +18,7 @@ type ResumeSession = {
   isOrganiser: boolean;
   playerName: string | null;
 };
+type AccountInfo = { id: string; email: string; tier: string } | null;
 
 function safeParseJSON<T>(value: string | null, fallback: T): T {
   try {
@@ -66,6 +67,8 @@ export default function HomePage() {
   const router = useRouter();
   const [hasLocalSession, setHasLocalSession] = useState(false);
   const [resumeSessions, setResumeSessions] = useState<ResumeSession[]>([]);
+  const [account, setAccount] = useState<AccountInfo>(undefined as unknown as AccountInfo);
+  const [accountLoaded, setAccountLoaded] = useState(false);
 
   useEffect(() => {
     const s = safeParseJSON<AmericanoSession | null>(
@@ -73,6 +76,11 @@ export default function HomePage() {
     );
     setHasLocalSession(Boolean(s?.code));
     setResumeSessions(findResumeSessions());
+
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { setAccount(data); setAccountLoaded(true); })
+      .catch(() => { setAccount(null); setAccountLoaded(true); });
   }, []);
 
   function clearResume(code: string) {
@@ -81,6 +89,25 @@ export default function HomePage() {
     localStorage.removeItem(`eps_pin_${code}`);
     setResumeSessions((prev) => prev.filter((s) => s.code !== code));
   }
+
+  function handleCreateSession() {
+    if (!accountLoaded) return;
+    if (account) {
+      router.push("/session/new");
+    } else {
+      router.push("/login?next=/session/new");
+    }
+  }
+
+  const tierBadgeStyle = (tier: string): React.CSSProperties => ({
+    marginLeft: 6,
+    borderRadius: 999,
+    padding: "2px 7px",
+    fontSize: 10,
+    fontWeight: 1000,
+    background: tier === "FREE" ? "rgba(255,255,255,0.2)" : ORANGE,
+    color: WHITE,
+  });
 
   const st: Record<string, React.CSSProperties> = {
     page: {
@@ -266,6 +293,39 @@ export default function HomePage() {
     <div style={st.page}>
       <div style={st.card}>
 
+        {/* Account pill / Sign in link */}
+        <div style={{ display: "flex", justifyContent: "flex-end", minHeight: 28 }}>
+          {accountLoaded && (
+            account ? (
+              <div
+                onClick={() => router.push("/account")}
+                style={{
+                  background: "rgba(255,107,0,0.12)",
+                  border: "1px solid rgba(255,107,0,0.35)",
+                  borderRadius: 999,
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  fontWeight: 1000,
+                  color: WHITE,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                {account.email.length > 18 ? account.email.slice(0, 18) + "…" : account.email}
+                <span style={tierBadgeStyle(account.tier)}>{account.tier}</span>
+              </div>
+            ) : (
+              <span
+                onClick={() => router.push("/login")}
+                style={{ fontSize: 13, fontWeight: 900, color: ORANGE, cursor: "pointer", textDecoration: "none" }}
+              >
+                Sign in
+              </span>
+            )
+          )}
+        </div>
+
         {/* Logo */}
         <div style={st.logoWrap}>
           <Image
@@ -336,7 +396,7 @@ export default function HomePage() {
             border: "1px solid rgba(255,255,255,0.15)",
             boxShadow: "0 4px 24px rgba(255,107,0,0.35)",
           }}
-          onClick={() => router.push("/session/new")}
+          onClick={handleCreateSession}
         >
           <div style={{ ...st.btnInner, gap: 0, padding: "18px 18px 16px" }}>
             {/* Header */}

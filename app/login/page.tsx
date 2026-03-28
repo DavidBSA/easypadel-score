@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -25,6 +25,7 @@ function LoginForm() {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const urlError = searchParams.get("error");
+  const next = searchParams.get("next");
 
   async function handleSubmit() {
     if (!email.includes("@")) return;
@@ -114,6 +115,11 @@ function LoginForm() {
             }}
           >
             Check your email — a sign in link is on its way. The link expires in 15 minutes.
+            {next && (
+              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+                After signing in, head to your account page and continue from there.
+              </div>
+            )}
           </div>
         ) : (
           <>

@@ -12,6 +12,8 @@ const GREEN = "#00C851";
 
 type Format = "SINGLE" | "MIXED" | "TEAM";
 type DeuceMode = "star" | "golden" | "traditional";
+type AuthStatus = "loading" | "ok" | "upgrade" | "unauthed";
+type AccountInfo = { id: string; email: string; tier: string };
 
 function serveDistribution(pts: number): [number, number, number, number] {
   const base = Math.floor(pts / 4);
@@ -27,6 +29,9 @@ const DEUCE_OPTIONS: { value: DeuceMode; label: string; desc: string }[] = [
 
 export default function NewSessionPage() {
   const router = useRouter();
+
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
+  const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
   const [format, setFormat] = useState<Format>("MIXED");
@@ -57,6 +62,26 @@ export default function NewSessionPage() {
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => {
+        if (res.status === 401) { setAuthStatus("unauthed"); return null; }
+        if (res.ok) return res.json();
+        setAuthStatus("unauthed");
+        return null;
+      })
+      .then((data) => {
+        if (data) { setAccountInfo(data); setAuthStatus("ok"); }
+      })
+      .catch(() => setAuthStatus("unauthed"));
+  }, []);
+
+  useEffect(() => {
+    if (authStatus === "unauthed") {
+      router.push("/login?next=/session/new");
+    }
+  }, [authStatus, router]);
 
   const isSingle = format === "SINGLE";
   const isTeam = format === "TEAM";
@@ -192,6 +217,15 @@ export default function NewSessionPage() {
 
   const effectiveMaxTeams = Math.max(maxTeams, minTeams);
 
+  // ── Loading state ──────────────────────────────────────────────────────────
+  if (authStatus === "loading") {
+    return (
+      <div style={{ minHeight: "100vh", background: BLACK, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.4)", fontSize: 15 }}>
+        Checking account…
+      </div>
+    );
+  }
+
   // ── PIN confirmation screen ────────────────────────────────────────────────
   if (createdPin && createdCode) {
     return (
@@ -241,6 +275,28 @@ export default function NewSessionPage() {
           </div>
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>
         </div>
+
+        {/* ── Account status bar ── */}
+        {authStatus === "ok" && accountInfo && (
+          <div style={{ borderRadius: 12, padding: "10px 14px", background: "rgba(0,200,81,0.07)", border: "1px solid rgba(0,200,81,0.20)", fontSize: 13, fontWeight: 900, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>✓ Signed in as {accountInfo.email}</span>
+            <span
+              onClick={() => router.push("/account")}
+              style={{ borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 1000, background: accountInfo.tier === "FREE" ? "rgba(255,255,255,0.15)" : ORANGE, color: WHITE, cursor: "pointer" }}
+            >
+              {accountInfo.tier}
+            </span>
+          </div>
+        )}
+
+        {/* UPGRADE GATE — wire up when Apple IAP is ready
+          authStatus === "upgrade" && (
+            <div style={upgradePromptStyle}>
+              <div>Create sessions from $4 · Upgrade in the App Store</div>
+              <button onClick={() => router.push("/account")}>View plans</button>
+            </div>
+          )
+        */}
 
         <div style={st.sectionLabel}>Format</div>
         <div style={st.formatGrid}>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../lib/prisma";
+import { getAccount } from "../../../lib/auth";
 import type { Prisma } from "../../../app/generated/prisma";
 
 function makeCode(): string {
@@ -16,6 +17,11 @@ function makePin(): string {
 
 export async function POST(req: NextRequest) {
   try {
+    const account = await getAccount();
+    if (!account) {
+      return NextResponse.json({ error: "Account required to create a session" }, { status: 401 });
+    }
+
     const body = await req.json();
     const { format, courts, pointsPerMatch, servesPerRotation, maxPlayers, scheduledAt } = body;
 
@@ -48,6 +54,7 @@ export async function POST(req: NextRequest) {
           servesPerRotation: servesPerRotation ?? 4,
           maxPlayers: maxPlayers ?? null,
           scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+          ownerAccountId: account.id,
         },
       });
     });
