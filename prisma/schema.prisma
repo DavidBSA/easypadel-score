@@ -42,12 +42,14 @@ model Session {
   servesPerRotation  Int           @default(4)
   maxPlayers         Int?
   scheduledAt        DateTime?
+  ownerAccountId     String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
-  players  Player[]
-  matches  Match[]
-  devices  Device[]
+  players      Player[]
+  matches      Match[]
+  devices      Device[]
+  ownerAccount Account? @relation(fields: [ownerAccountId], references: [id])
 
   @@index([code])
 }
@@ -130,4 +132,23 @@ model BugReport {
   status      String    @default("OPEN")
   createdAt   DateTime  @default(now())
   resolvedAt  DateTime?
+}
+
+model Account {
+  id         String      @id @default(cuid())
+  email      String      @unique
+  tier       String      @default("FREE")
+  createdAt  DateTime    @default(now())
+  sessions   Session[]
+  authTokens AuthToken[]
+}
+
+model AuthToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  account   Account  @relation(fields: [email], references: [email])
 }
