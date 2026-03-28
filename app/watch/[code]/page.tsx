@@ -9,7 +9,7 @@ const ORANGE = "#FF6B00";
 const GREEN = "#00C851";
 const RED = "#FF4040";
 
-type WatchScreen = "loading" | "waiting" | "scoring" | "serve" | "complete" | "leaderboard";
+type WatchScreen = "loading" | "waiting" | "scoring" | "serve" | "complete" | "leaderboard" | "unsupported";
 
 type MatchInfo = {
   matchId: string;
@@ -36,6 +36,7 @@ type SMatch = {
 type SSession = {
   code: string; status: string; courts: number; pointsPerMatch: number;
   servesPerRotation: number | null;
+  format?: string;
   players: { id: string; name: string; isActive: boolean }[];
   matches: SMatch[];
 };
@@ -93,13 +94,25 @@ function WatchContent({ code }: { code: string }) {
   const screenRef = useRef<WatchScreen>("loading");
   const esRef = useRef<EventSource | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTapRef = useRef(0);
+  // Refs mirror localA/localB so addPoint/undoPoint never read stale closure values
+  const localARef = useRef(0);
+  const localBRef = useRef(0);
+  const matchRef = useRef<MatchInfo | null>(null);
+  const deviceIdRef = useRef<string | null>(null);
   const lastTapTeamRef = useRef<"A" | "B">("A");
   const touchStartRef = useRef({ x: 0, y: 0 });
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initializedRef = useRef(false);
 
   function goToScreen(s: WatchScreen) { screenRef.current = s; setScreen(s); }
+
+  useEffect(() => {
+    const btn = document.querySelector('[data-bug-report-button]');
+    if (btn) (btn as HTMLElement).style.display = 'none';
+    return () => {
+      if (btn) (btn as HTMLElement).style.display = '';
+    };
+  }, []);
 
   useEffect(() => {
     const style = document.createElement("style");
@@ -109,13 +122,29 @@ function WatchContent({ code }: { code: string }) {
   }, []);
 
   useEffect(() => {
+    let tag = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+    const created = !tag;
+    if (!tag) { tag = document.createElement("meta"); tag.name = "viewport"; }
+    tag.content = "width=320, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
+    if (created) document.head.appendChild(tag);
+  }, []);
+
+  useEffect(() => {
     try {
       const stored = localStorage.getItem(`eps_join_${code}`);
-      if (stored) { const { deviceId: did } = JSON.parse(stored); if (did) setDeviceId(did); }
+      if (stored) {
+        const { deviceId: did } = JSON.parse(stored);
+        if (did) { setDeviceId(did); deviceIdRef.current = did; }
+      }
     } catch {}
   }, [code]);
 
   const processSession = useCallback((data: SSession) => {
+    if (data.format && data.format !== "AMERICANO" && data.format !== "TEAM_AMERICANO") {
+      goToScreen("unsupported");
+      return;
+    }
+
     setSession(data);
     setPlayers(data.players.map(p => ({ id: p.id, name: p.name })));
     setLeaderboard(buildLeaderboard(data));
@@ -143,8 +172,12 @@ function WatchContent({ code }: { code: string }) {
         firstServeTeam: "A",
       };
 
+      matchRef.current = newMatch;
       setMatch(prev => {
         if (!prev || prev.matchId !== activeMatch.id) {
+          // New match — initialise local score from SSE data
+          localARef.current = newMatch.pointsA;
+          localBRef.current = newMatch.pointsB;
           setLocalA(newMatch.pointsA);
           setLocalB(newMatch.pointsB);
         }
@@ -157,6 +190,7 @@ function WatchContent({ code }: { code: string }) {
         goToScreen(total >= data.pointsPerMatch ? "complete" : "scoring");
       }
     } else {
+      matchRef.current = null;
       setMatch(null);
       if (!initializedRef.current || screenRef.current === "loading") {
         goToScreen("waiting");
@@ -198,41 +232,43 @@ function WatchContent({ code }: { code: string }) {
 
   const nameMap = Object.fromEntries(players.map(p => [p.id, p.name]));
 
-  async function addPoint(team: "A" | "B") {
-    if (!match || !deviceId) return;
-    const now = Date.now();
-    if (now - lastTapRef.current < 100) return;
-    lastTapRef.current = now;
+  function addPoint(team: "A" | "B") {
+    const m = matchRef.current;
+    if (!m) return;
+
     lastTapTeamRef.current = team;
 
-    const newA = team === "A" ? localA + 1 : localA;
-    const newB = team === "B" ? localB + 1 : localB;
-    setLocalA(newA); setLocalB(newB);
+    // Use refs so rapid taps always increment from the true current value
+    const newA = team === "A" ? localARef.current + 1 : localARef.current;
+    const newB = team === "B" ? localBRef.current + 1 : localBRef.current;
+    localARef.current = newA;
+    localBRef.current = newB;
+    setLocalA(newA);
+    setLocalB(newB);
 
-    if (newA + newB >= match.pointsPerMatch) goToScreen("complete");
-
-    try {
-      await fetch(`/api/matches/${match.matchId}/score`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pointsA: newA, pointsB: newB, deviceId, isPlayerSubmission: true }),
-      });
-    } catch { setLocalA(localA); setLocalB(localB); }
+    if (newA + newB >= m.pointsPerMatch) {
+      goToScreen("complete");
+      // One API call with the final score
+      const did = deviceIdRef.current;
+      if (did) {
+        fetch(`/api/matches/${m.matchId}/score`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pointsA: newA, pointsB: newB, deviceId: did, isPlayerSubmission: true }),
+        }).catch(() => {});
+      }
+    }
   }
 
-  async function undoPoint() {
-    if (!match || !deviceId) return;
+  function undoPoint() {
+    if (!matchRef.current) return;
     const lastTeam = lastTapTeamRef.current;
-    const newA = lastTeam === "A" ? Math.max(0, localA - 1) : localA;
-    const newB = lastTeam === "B" ? Math.max(0, localB - 1) : localB;
-    setLocalA(newA); setLocalB(newB);
-    try {
-      await fetch(`/api/matches/${match.matchId}/score`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pointsA: newA, pointsB: newB, deviceId, isPlayerSubmission: true }),
-      });
-    } catch {}
+    const newA = lastTeam === "A" ? Math.max(0, localARef.current - 1) : localARef.current;
+    const newB = lastTeam === "B" ? Math.max(0, localBRef.current - 1) : localBRef.current;
+    localARef.current = newA;
+    localBRef.current = newB;
+    setLocalA(newA);
+    setLocalB(newB);
   }
 
   function onTouchStart(e: React.TouchEvent) {
@@ -303,7 +339,7 @@ function WatchContent({ code }: { code: string }) {
   const divider = <div style={{ height: 1, background: "#333333", margin: "8px 0" }} />;
 
   function SecTitle({ text }: { text: string }) {
-    return <div style={{ fontSize: 11, color: ORANGE, letterSpacing: 0.8, textTransform: "uppercase", fontWeight: 600 }}>{text}</div>;
+    return <div style={{ fontSize: 14, color: ORANGE, letterSpacing: 0.8, textTransform: "uppercase", fontWeight: 600 }}>{text}</div>;
   }
 
   const ServeDot = () => (
@@ -327,6 +363,25 @@ function WatchContent({ code }: { code: string }) {
     );
   }
 
+  // ── SCREEN: unsupported ──────────────────────────────────────────────────
+  if (screen === "unsupported") {
+    return (
+      <div style={{ ...wrap, alignItems: "center", justifyContent: "center" }}>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+          <SecTitle text="WATCH SCORING" />
+          {divider}
+          <div style={{ fontSize: 13, color: "#aaa", textAlign: "center", lineHeight: 1.5 }}>
+            Single Match format uses the player view for scoring.
+          </div>
+          {divider}
+          <div style={{ fontSize: 11, color: "#666", textAlign: "center" }}>
+            Open the player view on your phone to score.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── SCREEN: leaderboard ──────────────────────────────────────────────────
   if (screen === "leaderboard") {
     return (
@@ -339,7 +394,7 @@ function WatchContent({ code }: { code: string }) {
             {leaderboard.slice(0, 8).map((row, idx) => {
               const isMe = row.id === pid;
               return (
-                <div key={row.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", color: isMe ? ORANGE : "#dddddd", fontWeight: isMe ? 500 : 400 }}>
+                <div key={row.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 15, padding: "4px 0", color: isMe ? ORANGE : "#dddddd", fontWeight: isMe ? 500 : 400 }}>
                   <span>{idx + 1}. {isMe ? "You" : row.name}</span>
                   <span>{row.diff > 0 ? "+" + row.diff : row.diff}</span>
                 </div>
@@ -358,15 +413,15 @@ function WatchContent({ code }: { code: string }) {
     return (
       <div style={wrap} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         {reconnecting && <div style={{ fontSize: 10, color: "#555", textAlign: "center", padding: "4px 0" }}>Reconnecting...</div>}
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+        <div style={{ padding: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
           <SecTitle text={`ROUND ${roundNumber}`} />
           {divider}
           {nextQueuedMatch ? (
             <>
-              <div style={{ fontSize: 12, color: "#aaa" }}>
+              <div style={{ fontSize: 13, color: "#aaa" }}>
                 {nextQueuedMatch.courtNumber ? `Court ${nextQueuedMatch.courtNumber}` : "Court TBD"}{waitMins ? ` · ~${waitMins} min` : ""}
               </div>
-              <div style={{ fontSize: 11, color: "#666", marginTop: 6 }}>vs</div>
+              <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>vs</div>
               <div style={{ fontSize: 15, fontWeight: 500, color: WHITE, textAlign: "center" }}>
                 {(() => {
                   const isMyTeamA = [nextQueuedMatch.teamAPlayer1, nextQueuedMatch.teamAPlayer2].includes(pid);
@@ -380,7 +435,7 @@ function WatchContent({ code }: { code: string }) {
             <div style={{ fontSize: 14, color: "#aaa", textAlign: "center" }}>Waiting for next match</div>
           )}
           {divider}
-          <div style={{ background: "rgba(0,200,81,0.15)", border: "1px solid rgba(0,200,81,0.4)", borderRadius: 20, padding: "3px 10px", fontSize: 11, color: GREEN }}>
+          <div style={{ background: "rgba(0,200,81,0.15)", border: "1px solid rgba(0,200,81,0.4)", borderRadius: 20, padding: "3px 10px", fontSize: 13, color: GREEN }}>
             Waiting...
           </div>
         </div>
@@ -401,13 +456,13 @@ function WatchContent({ code }: { code: string }) {
             {won ? "You won!" : isDraw ? "Draw" : "You lost"}
           </div>
           {divider}
-          <div style={{ fontSize: 26, fontWeight: 500, color: WHITE, textAlign: "center", margin: "5px 0" }}>
+          <div style={{ fontSize: 32, fontWeight: 500, color: WHITE, textAlign: "center", margin: "5px 0" }}>
             {myScore}–{theirScore}
           </div>
           {divider}
           <button
             onClick={() => goToScreen("waiting")}
-            style={{ background: ORANGE, color: WHITE, border: "none", borderRadius: 10, padding: 7, fontSize: 12, fontWeight: 500, width: "100%", cursor: "pointer", minHeight: 44 }}
+            style={{ background: ORANGE, color: WHITE, border: "none", borderRadius: 10, padding: 7, fontSize: 15, fontWeight: 500, width: "100%", cursor: "pointer", minHeight: 44 }}
           >
             Next match
           </button>
@@ -424,11 +479,11 @@ function WatchContent({ code }: { code: string }) {
         <div style={{ padding: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
           <SecTitle text="SERVING NOW" />
           {divider}
-          <div style={{ fontSize: 15, fontWeight: 500, color: WHITE, textAlign: "center", margin: "5px 0" }}>
+          <div style={{ fontSize: 20, fontWeight: 500, color: WHITE, textAlign: "center", margin: "5px 0" }}>
             {serveInfo?.name ?? "—"}
           </div>
-          <div style={{ fontSize: 11, color: "#777" }}>Next: {serveInfo?.nextName ?? "—"}</div>
-          <div style={{ fontSize: 11, color: "#777", marginTop: 2 }}>{serveInfo?.ptsLeft ?? 0} pts left this rotation</div>
+          <div style={{ fontSize: 13, color: "#777" }}>Next: {serveInfo?.nextName ?? "—"}</div>
+          <div style={{ fontSize: 13, color: "#777", marginTop: 2 }}>{serveInfo?.ptsLeft ?? 0} pts left this rotation</div>
           {divider}
           <div style={{ fontSize: 10, color: "#444" }}>swipe left to score</div>
         </div>
@@ -442,7 +497,7 @@ function WatchContent({ code }: { code: string }) {
 
   return (
     <div
-      style={{ ...wrap, padding: 8, gap: 3 }}
+      style={{ ...wrap, padding: 0, gap: 3 }}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
@@ -457,11 +512,11 @@ function WatchContent({ code }: { code: string }) {
         onTouchStart={(e) => { onTouchStart(e); onPressStart(); }}
         onTouchEnd={(e) => { onPressEnd(); onTouchEnd(e); }}
       >
-        <div style={{ fontSize: 10, color: ORANGE, fontWeight: 500 }}>
+        <div style={{ fontSize: 13, color: ORANGE, fontWeight: 500 }}>
           You &amp; {partnerName}
           {isMyTeamServing && <ServeDot />}
         </div>
-        <div style={{ fontSize: 38, fontWeight: 600, color: WHITE, lineHeight: 1.2 }}>{myScore}</div>
+        <div style={{ fontSize: 48, fontWeight: 600, color: WHITE, lineHeight: 1.2 }}>{myScore}</div>
       </div>
 
       {/* Opponents — bottom */}
@@ -473,11 +528,11 @@ function WatchContent({ code }: { code: string }) {
         onTouchStart={(e) => { onTouchStart(e); onPressStart(); }}
         onTouchEnd={(e) => { onPressEnd(); onTouchEnd(e); }}
       >
-        <div style={{ fontSize: 10, color: "#aaa" }}>
+        <div style={{ fontSize: 13, color: "#aaa" }}>
           {oppName1} &amp; {oppName2}
           {!isMyTeamServing && <ServeDot />}
         </div>
-        <div style={{ fontSize: 38, fontWeight: 600, color: "#cccccc", lineHeight: 1.2 }}>{theirScore}</div>
+        <div style={{ fontSize: 48, fontWeight: 600, color: "#cccccc", lineHeight: 1.2 }}>{theirScore}</div>
       </div>
     </div>
   );
