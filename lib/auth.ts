@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { prisma } from "./prisma";
 
 export const SESSION_COOKIE = "eps_account_session";
-export const SESSION_DURATION_DAYS = 30;
+export const SESSION_DURATION_DAYS = 60;
 
 // Returns the logged-in account or null
 export async function getAccount(): Promise<{ id: string; email: string; tier: string } | null> {

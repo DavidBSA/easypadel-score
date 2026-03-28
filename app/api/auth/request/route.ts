@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../../lib/prisma";
-import { generateToken } from "../../../../lib/auth";
+
+function generateOTP(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,14 +20,12 @@ export async function POST(req: NextRequest) {
       create: { email },
     });
 
-    const token = generateToken();
+    const otp = generateOTP();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     await prisma.authToken.create({
-      data: { email, token, expiresAt, used: false },
+      data: { email, token: otp, expiresAt, used: false },
     });
-
-    const magicLink = `${process.env.APP_URL}/api/auth/verify?token=${token}`;
 
     await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -35,8 +36,8 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         from: "EasyPadelScore <auth@easypadelscore.com>",
         to: [email],
-        subject: "Your EasyPadelScore login link",
-        html: `<h2>Sign in to EasyPadelScore</h2><p>Click the link below to sign in. This link expires in 15 minutes.</p><p><a href='${magicLink}' style='background:#FF6B00;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;'>Sign In</a></p><p style='color:#999;font-size:12px;'>If you did not request this, you can safely ignore this email.</p>`,
+        subject: "Your EasyPadelScore code",
+        html: `<h2>Your sign-in code</h2><p>Enter this code to sign in to EasyPadelScore:</p><p style='font-size:48px;font-weight:bold;letter-spacing:8px;color:#FF6B00;'>${otp}</p><p style='color:#999;font-size:12px;'>This code expires in 15 minutes. If you didn't request this, ignore this email.</p>`,
       }),
     });
 
