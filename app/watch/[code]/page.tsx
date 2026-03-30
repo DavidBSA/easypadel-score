@@ -503,7 +503,7 @@ function WatchContent({ code }: { code: string }) {
     const cur = screenRef.current;
 
     if (Math.abs(dy) > 60 && Math.abs(dx) < 40) {
-      if (dy < -60 && (cur === "scoring" || cur === "waiting")) {
+      if (dy < -60 && (cur === "scoring" || cur === "waiting" || cur === "tennis-scoring")) {
         e.preventDefault(); setPrevScreen(cur); goToScreen("leaderboard"); return;
       }
       if (dy > 60 && cur === "leaderboard") {
@@ -511,8 +511,8 @@ function WatchContent({ code }: { code: string }) {
       }
     }
     if (Math.abs(dx) > 50 && Math.abs(dy) < 30) {
-      if (dx > 50 && cur === "scoring") { e.preventDefault(); goToScreen("serve"); return; }
-      if (dx < -50 && cur === "serve") { e.preventDefault(); goToScreen("scoring"); return; }
+      if (dx > 50 && (cur === "scoring" || cur === "tennis-scoring")) { e.preventDefault(); goToScreen("serve"); return; }
+      if (dx < -50 && cur === "serve") { e.preventDefault(); goToScreen(prevScreen === "tennis-scoring" ? "tennis-scoring" : "scoring"); return; }
     }
   }
 
@@ -833,6 +833,47 @@ function WatchContent({ code }: { code: string }) {
 
   // ── SCREEN: serve ────────────────────────────────────────────────────────
   if (screen === "serve") {
+    const isTennis = prevScreen === "tennis-scoring" || (screenRef.current === "serve" && match !== null && tennisPayload !== null);
+    const m = match;
+
+    if (isTennis && m && tennisPayload) {
+      const ts = tennisState;
+      const currentServerId2 = getCurrentTennisServer(serveState, m.teamAPlayerIds, m.teamBPlayerIds);
+      const nextServerId = getNextTennisServer(serveState, m.teamAPlayerIds, m.teamBPlayerIds);
+      const currentServerName = currentServerId2 ? (nameMap[currentServerId2] ?? "?") : "?";
+      const nextServerName = nextServerId ? (nameMap[nextServerId] ?? "?") : "?";
+      const gameNum = serveState.gamesPlayedInSet + 1;
+      const setNum = ts.setIndex + 1;
+
+      const tbInfo = ts.isTiebreak ? (() => {
+        const ptsLeftInTurn = ts.tbPointsLeftInTurn;
+        return `changes in ${ptsLeftInTurn} pt${ptsLeftInTurn !== 1 ? "s" : ""}`;
+      })() : null;
+
+      return (
+        <div style={wrap} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+          {reconnecting && <div style={{ fontSize: 10, color: "#555", textAlign: "center", padding: "4px 0" }}>Reconnecting...</div>}
+          <div style={{ padding: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <SecTitle text="SERVING NOW" />
+            {divider}
+            <div style={{ fontSize: 20, fontWeight: 500, color: WHITE, textAlign: "center", margin: "5px 0" }}>
+              {currentServerName}
+            </div>
+            {tbInfo
+              ? <div style={{ fontSize: 13, color: "#777" }}>{tbInfo}</div>
+              : <div style={{ fontSize: 13, color: "#777" }}>Next game: {nextServerName}</div>
+            }
+            <div style={{ fontSize: 13, color: "#555", marginTop: 2 }}>
+              {ts.isTiebreak ? (ts.tiebreakTarget === 10 ? "Super Tiebreak" : "Tiebreak") : `Game ${gameNum} · Set ${setNum}`}
+            </div>
+            {divider}
+            <div style={{ fontSize: 10, color: "#444" }}>swipe left to score</div>
+          </div>
+        </div>
+      );
+    }
+
+    // Americano serve screen (unchanged)
     return (
       <div style={wrap} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         {reconnecting && <div style={{ fontSize: 10, color: "#555", textAlign: "center", padding: "4px 0" }}>Reconnecting...</div>}
@@ -846,6 +887,38 @@ function WatchContent({ code }: { code: string }) {
           <div style={{ fontSize: 13, color: "#777", marginTop: 2 }}>{serveInfo?.ptsLeft ?? 0} pts left this rotation</div>
           {divider}
           <div style={{ fontSize: 10, color: "#444" }}>swipe left to score</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── SCREEN: tennis-complete ──────────────────────────────────────────────
+  if (screen === "tennis-complete") {
+    const ts = tennisState;
+    const myTeam = match?.myTeam ?? "A";
+    const mySets = myTeam === "A" ? ts.setsA : ts.setsB;
+    const oppSets = myTeam === "A" ? ts.setsB : ts.setsA;
+    const won = mySets > oppSets;
+    const isDraw = mySets === oppSets;
+    return (
+      <div style={{ ...wrap, alignItems: "center", justifyContent: "center" }}>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: "100%" }}>
+          <div style={{ fontSize: 20, color: GREEN, textAlign: "center", marginBottom: 2 }}>✓</div>
+          <div style={{ fontSize: 13, color: won ? GREEN : "#aaa", fontWeight: 500 }}>
+            {won ? "You won!" : isDraw ? "Draw" : "You lost"}
+          </div>
+          {divider}
+          <div style={{ fontSize: 32, fontWeight: 500, color: WHITE, textAlign: "center", margin: "5px 0" }}>
+            {mySets}–{oppSets}
+          </div>
+          <div style={{ fontSize: 12, color: "#666" }}>sets</div>
+          {divider}
+          <button
+            onClick={() => goToScreen("waiting")}
+            style={{ background: ORANGE, color: WHITE, border: "none", borderRadius: 10, padding: 7, fontSize: 15, fontWeight: 500, width: "100%", cursor: "pointer", minHeight: 44 }}
+          >
+            Done
+          </button>
         </div>
       </div>
     );
