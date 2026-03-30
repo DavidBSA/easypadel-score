@@ -9,7 +9,7 @@ const ORANGE = "#FF6B00";
 const GREEN = "#00C851";
 const RED = "#FF4040";
 
-type WatchScreen = "loading" | "waiting" | "scoring" | "serve" | "complete" | "leaderboard" | "unsupported" | "server-picker" | "tennis-scoring" | "tennis-complete";
+type WatchScreen = "loading" | "waiting" | "scoring" | "serve" | "complete" | "leaderboard" | "server-picker" | "tennis-scoring" | "tennis-complete";
 
 type MatchInfo = {
   matchId: string;
@@ -703,25 +703,6 @@ function WatchContent({ code }: { code: string }) {
             {!isMyTeamServing && currentServerId !== null && <ServeDot />}
           </div>
           <div style={{ fontSize: isDeuce ? 28 : 48, fontWeight: 600, color: "#cccccc", lineHeight: 1.2 }}>{oppScore}</div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── SCREEN: unsupported ──────────────────────────────────────────────────
-  if (screen === "unsupported") {
-    return (
-      <div style={{ ...wrap, alignItems: "center", justifyContent: "center" }}>
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-          <SecTitle text="WATCH SCORING" />
-          {divider}
-          <div style={{ fontSize: 13, color: "#aaa", textAlign: "center", lineHeight: 1.5 }}>
-            Single Match format uses the player view for scoring.
-          </div>
-          {divider}
-          <div style={{ fontSize: 11, color: "#666", textAlign: "center" }}>
-            Open the player view on your phone to score.
-          </div>
         </div>
       </div>
     );
