@@ -58,6 +58,7 @@ type Session = {
   code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: string;
   courts: number; pointsPerMatch: number; servesPerRotation: number | null;
   players: Player[]; matches: Match[]; scheduledAt: string | null;
+  matchRules?: TennisPayload | null;
 };
 type LeaderRow = { playerId: string; name: string; played: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type ScoringMode = "final" | "live";
@@ -150,7 +151,12 @@ export default function PlayerPage() {
     setBootstrapped(true);
   }, [code]);
 
-  const applySession = useCallback((data: Session) => setSession(data), []);
+  const applySession = useCallback((data: Session) => {
+    setSession(data);
+    if (data.matchRules && !localStorage.getItem("eps_match_rules_" + data.code)) {
+      setTennisPayload(data.matchRules);
+    }
+  }, []);
 
   useEffect(() => {
     if (!code) return;
