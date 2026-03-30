@@ -42,6 +42,7 @@ model Session {
   servesPerRotation  Int           @default(4)
   maxPlayers         Int?
   scheduledAt        DateTime?
+  matchRules         Json?
   ownerAccountId     String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt

@@ -1,8 +1,8 @@
 -- CreateEnum
-CREATE TYPE "SessionFormat" AS ENUM ('MIXED', 'TEAM');
+CREATE TYPE "SessionFormat" AS ENUM ('SINGLE', 'MIXED', 'TEAM');
 
 -- CreateEnum
-CREATE TYPE "SessionStatus" AS ENUM ('ACTIVE', 'COMPLETE');
+CREATE TYPE "SessionStatus" AS ENUM ('LOBBY', 'ACTIVE', 'COMPLETE');
 
 -- CreateEnum
 CREATE TYPE "MatchStatus" AS ENUM ('PENDING', 'IN_PROGRESS', 'COMPLETE');
@@ -16,9 +16,14 @@ CREATE TABLE "Session" (
     "code" TEXT NOT NULL,
     "organiserPin" TEXT NOT NULL,
     "format" "SessionFormat" NOT NULL,
-    "status" "SessionStatus" NOT NULL DEFAULT 'ACTIVE',
+    "status" "SessionStatus" NOT NULL DEFAULT 'LOBBY',
     "courts" INTEGER NOT NULL,
     "pointsPerMatch" INTEGER NOT NULL DEFAULT 21,
+    "servesPerRotation" INTEGER NOT NULL DEFAULT 4,
+    "maxPlayers" INTEGER,
+    "scheduledAt" TIMESTAMP(3),
+    "matchRules" JSONB,
+    "ownerAccountId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -77,10 +82,46 @@ CREATE TABLE "Device" (
     "sessionId" TEXT NOT NULL,
     "isOrganiser" BOOLEAN NOT NULL DEFAULT false,
     "courtNumber" INTEGER,
+    "playerId" TEXT,
     "lastSeenAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Device_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "BugReport" (
+    "id" TEXT NOT NULL,
+    "pageUrl" TEXT NOT NULL,
+    "sessionCode" TEXT,
+    "userNote" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "resolvedAt" TIMESTAMP(3),
+
+    CONSTRAINT "BugReport_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Account" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "tier" TEXT NOT NULL DEFAULT 'FREE',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Account_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AuthToken" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "used" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AuthToken_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -105,7 +146,19 @@ CREATE INDEX "ScoreSubmission_matchId_idx" ON "ScoreSubmission"("matchId");
 CREATE UNIQUE INDEX "ScoreSubmission_matchId_deviceId_key" ON "ScoreSubmission"("matchId", "deviceId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Device_playerId_key" ON "Device"("playerId");
+
+-- CreateIndex
 CREATE INDEX "Device_sessionId_idx" ON "Device"("sessionId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Account_email_key" ON "Account"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AuthToken_token_key" ON "AuthToken"("token");
+
+-- AddForeignKey
+ALTER TABLE "Session" ADD CONSTRAINT "Session_ownerAccountId_fkey" FOREIGN KEY ("ownerAccountId") REFERENCES "Account"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Player" ADD CONSTRAINT "Player_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -121,3 +174,9 @@ ALTER TABLE "ScoreSubmission" ADD CONSTRAINT "ScoreSubmission_deviceId_fkey" FOR
 
 -- AddForeignKey
 ALTER TABLE "Device" ADD CONSTRAINT "Device_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Device" ADD CONSTRAINT "Device_playerId_fkey" FOREIGN KEY ("playerId") REFERENCES "Player"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AuthToken" ADD CONSTRAINT "AuthToken_email_fkey" FOREIGN KEY ("email") REFERENCES "Account"("email") ON DELETE RESTRICT ON UPDATE CASCADE;
