@@ -178,9 +178,70 @@ function WatchContent({ code }: { code: string }) {
   }, [code]);
 
   const processSession = useCallback((data: SSession) => {
-    console.log("[watch] session.format:", data.format);
+    console.log("[watch] session.format:", data.format, "matchRules:", data.matchRules);
+
+    if (data.matchRules) {
+      setTennisPayload(data.matchRules);
+    }
+
     if (data.format === "SINGLE") {
-      goToScreen("unsupported");
+      setSession(data);
+      setPlayers(data.players.map(p => ({ id: p.id, name: p.name })));
+      setLeaderboard(buildLeaderboard(data));
+
+      const player = data.players.find(p => p.id === pid);
+      if (!player) { setPageError("Player not found. Check your link."); return; }
+
+      const activeMatch = data.matches.find(
+        m => m.status === "IN_PROGRESS" &&
+          [m.teamAPlayer1, m.teamAPlayer2, m.teamBPlayer1, m.teamBPlayer2].includes(pid)
+      );
+
+      if (activeMatch) {
+        const myTeam: "A" | "B" = [activeMatch.teamAPlayer1, activeMatch.teamAPlayer2].includes(pid) ? "A" : "B";
+        const newMatch: MatchInfo = {
+          matchId: activeMatch.id,
+          courtNumber: activeMatch.courtNumber ?? 1,
+          myTeam,
+          teamAPlayerIds: [activeMatch.teamAPlayer1, activeMatch.teamAPlayer2],
+          teamBPlayerIds: [activeMatch.teamBPlayer1, activeMatch.teamBPlayer2],
+          pointsA: activeMatch.pointsA ?? 0,
+          pointsB: activeMatch.pointsB ?? 0,
+          pointsPerMatch: data.pointsPerMatch,
+          servesPerRotation: data.servesPerRotation ?? 4,
+          firstServeTeam: "A",
+        };
+
+        setMatch(prev => {
+          if (!prev || prev.matchId !== activeMatch.id) {
+            // New match: reset tennis state and serve state
+            const freshSnap = T0;
+            tennisStateRef.current = freshSnap;
+            setTennisState(freshSnap);
+            const freshServe = SERVE0;
+            serveStateRef.current = freshServe;
+            setServeState(freshServe);
+            tennisHistoryRef.current = [];
+            tennisSubmittedRef.current = false;
+            matchRef.current = newMatch;
+            if (!initializedRef.current || screenRef.current === "loading" || screenRef.current === "waiting") {
+              goToScreen("server-picker");
+            }
+          }
+          return newMatch;
+        });
+      } else {
+        // No active match for this player — show waiting
+        matchRef.current = null;
+        setMatch(null);
+        if (!initializedRef.current || screenRef.current === "loading") {
+          goToScreen("waiting");
+        } else if (screenRef.current === "tennis-scoring" || screenRef.current === "server-picker") {
+          goToScreen("waiting");
+        }
+      }
+
+      initializedRef.current = true;
       return;
     }
 
