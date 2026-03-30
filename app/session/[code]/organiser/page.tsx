@@ -86,10 +86,10 @@ function addTennisPoint(prev: TSnap, team: TTeam, tp: TennisPayload): TSnap {
   if (prev.matchOver) return prev;
   if (prev.isTiebreak) { let n: TSnap = { ...prev }; if (team === "A") n.tbA += 1; else n.tbB += 1; n.tbPointNumber += 1; n = rotateServeAfterTBPoint(n); const w = tbWinner(n.tbA, n.tbB, n.tiebreakTarget); if (w) n = winTBAsSet(n, w, tp); return n; }
   const mode = tp.rules.deuceMode;
-  if (prev.pA >= 3 && prev.pB >= 3) { if (mode === "golden") return winGame(prev, team, tp); if (mode === "star") { if (prev.adTeam === null) return { ...prev, adTeam: team }; if (prev.adTeam === team) return winGame(prev, team, tp); return { ...prev, adTeam: null, deuceCount: prev.deuceCount + 1 }; } if (prev.adTeam === null) return { ...prev, adTeam: team }; if (prev.adTeam === team) return winGame(prev, team, tp); return { ...prev, adTeam: null }; }
+  if (prev.pA >= 3 && prev.pB >= 3) { if (mode === "golden") return winGame(prev, team, tp); if (mode === "star") { if (prev.adTeam === null) { if (prev.deuceCount >= 1) return winGame(prev, team, tp); return { ...prev, adTeam: team }; } if (prev.adTeam === team) return winGame(prev, team, tp); return { ...prev, adTeam: null, deuceCount: prev.deuceCount + 1 }; } if (prev.adTeam === null) return { ...prev, adTeam: team }; if (prev.adTeam === team) return winGame(prev, team, tp); return { ...prev, adTeam: null }; }
   let n: TSnap = { ...prev }; if (team === "A") n.pA += 1; else n.pB += 1;
   if (n.pA >= 4 && n.pB <= 2) return winGame(prev, "A", tp); if (n.pB >= 4 && n.pA <= 2) return winGame(prev, "B", tp);
-  if (n.pA >= 3 && n.pB >= 3) { if (mode === "star" && n.deuceCount >= 2) return winGame({ ...n }, team, tp); if (mode === "golden") return winGame({ ...n }, team, tp); } return n;
+  if (n.pA >= 3 && n.pB >= 3) { if (mode === "golden") return winGame({ ...n }, team, tp); } return n;
 }
 function getScoreDisplay(s: TSnap): { a: string; b: string } { if (s.isTiebreak) return { a: String(s.tbA), b: String(s.tbB) }; const map = ["0", "15", "30", "40"]; if (s.pA >= 3 && s.pB >= 3) { if (s.adTeam === "A") return { a: "AD", b: "40" }; if (s.adTeam === "B") return { a: "40", b: "AD" }; return { a: "40", b: "40" }; } return { a: map[clamp(s.pA, 0, 3)], b: map[clamp(s.pB, 0, 3)] }; }
 
