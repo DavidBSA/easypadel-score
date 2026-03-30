@@ -129,6 +129,9 @@ function WatchContent({ code }: { code: string }) {
   const [pageError, setPageError] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [tennisPayload, setTennisPayload] = useState<TennisPayload | null>(null);
+  const [tennisState, setTennisState] = useState<TSnap>(T0);
+  const [serveState, setServeState] = useState<ServeState>(SERVE0);
 
   const screenRef = useRef<WatchScreen>("loading");
   const esRef = useRef<EventSource | null>(null);
@@ -142,6 +145,10 @@ function WatchContent({ code }: { code: string }) {
   const touchStartRef = useRef({ x: 0, y: 0 });
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initializedRef = useRef(false);
+  const tennisStateRef = useRef<TSnap>(T0);
+  const serveStateRef = useRef<ServeState>(SERVE0);
+  const tennisHistoryRef = useRef<TSnap[]>([]);
+  const tennisSubmittedRef = useRef(false);
 
   function goToScreen(s: WatchScreen) { screenRef.current = s; setScreen(s); }
 
