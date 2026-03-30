@@ -585,6 +585,46 @@ function WatchContent({ code }: { code: string }) {
     );
   }
 
+  // ── SCREEN: server-picker ────────────────────────────────────────────────
+  if (screen === "server-picker") {
+    const m = match;
+    if (!m) return (
+      <div style={{ ...wrap, alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: "#888", fontSize: 13 }}>Waiting for match...</div>
+      </div>
+    );
+
+    const candidates = getServerPickerCandidates(serveState, m.teamAPlayerIds, m.teamBPlayerIds);
+    const isGame1 = serveState.gamesPlayedInSet === 0;
+    const setLabel = tennisState.setIndex !== undefined ? `Set ${tennisState.setIndex + 1}` : "Set 1";
+    const gameLabel = isGame1 ? "Game 1" : "Game 2";
+
+    return (
+      <div style={{ ...wrap, alignItems: "center", justifyContent: "center" }}>
+        <div style={{ padding: 16, width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+          <SecTitle text={`${setLabel} · ${gameLabel}`} />
+          {divider}
+          <div style={{ fontSize: 13, color: "#aaa", textAlign: "center" }}>Who is serving?</div>
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+            {candidates.map(pid2 => (
+              <button
+                key={pid2}
+                onClick={() => pickServer(pid2)}
+                style={{
+                  background: "rgba(255,107,0,0.12)", border: "1px solid rgba(255,107,0,0.4)",
+                  borderRadius: 12, padding: "14px 10px", fontSize: 16, fontWeight: 600,
+                  color: WHITE, cursor: "pointer", width: "100%",
+                }}
+              >
+                {nameMap[pid2] ?? pid2}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── SCREEN: unsupported ──────────────────────────────────────────────────
   if (screen === "unsupported") {
     return (
