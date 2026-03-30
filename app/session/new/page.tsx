@@ -116,6 +116,7 @@ export default function NewSessionPage() {
           servesPerRotation: isSingle ? null : 4,
           maxPlayers: isSingle ? 4 : slotMode === "fixed" ? Math.max(maxPlayersForAPI, minSlotsForAPI) : null,
           scheduledAt: scheduledDate && scheduledTime ? new Date(scheduledDate + "T" + scheduledTime).toISOString() : null,
+          matchRules: isSingle ? { sets, rules: { deuceMode, tiebreak, superTiebreak: sets === 1 ? false : superTiebreak } } : undefined,
         }),
       });
       const data = await r.json();
@@ -400,17 +401,17 @@ export default function NewSessionPage() {
               <div style={st.settingBox}>
                 <div style={st.settingLabel}>Courts</div>
                 <div style={st.stepper}>
-                  <button style={st.stepBtn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
-                  <div style={st.stepVal}>{courts}</div>
                   <button style={st.stepBtn} onClick={() => setCourts((c) => Math.max(1, c - 1))}>−</button>
+                  <div style={st.stepVal}>{courts}</div>
+                  <button style={st.stepBtn} onClick={() => setCourts((c) => Math.min(6, c + 1))}>+</button>
                 </div>
               </div>
               <div style={st.settingBox}>
                 <div style={st.settingLabel}>Points per match</div>
                 <div style={st.stepper}>
-                  <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.min(99, p + 1))}>+</button>
-                  <div style={st.stepVal}>{pointsPerMatch}</div>
                   <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.max(8, p - 1))}>−</button>
+                  <div style={st.stepVal}>{pointsPerMatch}</div>
+                  <button style={st.stepBtn} onClick={() => setPointsPerMatch((p) => Math.min(99, p + 1))}>+</button>
                 </div>
               </div>
             </div>
@@ -452,9 +453,9 @@ export default function NewSessionPage() {
               <div style={{ ...st.settingBox, marginTop: 10 }}>
                 <div style={st.settingLabel}>{isTeam ? "Max teams" : "Max players"}</div>
                 <div style={st.stepper}>
-                  <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.min(isTeam ? 32 : 64, n + 1))}>+</button>
-                  <div style={st.stepVal}>{effectiveMaxTeams}</div>
                   <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.max(isTeam ? minTeams : minPlayers, n - 1))}>−</button>
+                  <div style={st.stepVal}>{effectiveMaxTeams}</div>
+                  <button style={st.stepBtn} onClick={() => setMaxTeams((n) => Math.min(isTeam ? 32 : 64, n + 1))}>+</button>
                 </div>
                 <div style={{ ...st.small, marginTop: 8 }}>
                   Min {isTeam ? minTeams : minPlayers} · Max {isTeam ? 32 : 64}
