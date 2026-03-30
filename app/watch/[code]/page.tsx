@@ -625,6 +625,89 @@ function WatchContent({ code }: { code: string }) {
     );
   }
 
+  // ── SCREEN: tennis-scoring ───────────────────────────────────────────────
+  if (screen === "tennis-scoring") {
+    const m = match;
+    if (!m) { goToScreen("waiting"); return null; }
+
+    const ts = tennisState;
+    const score = getScoreDisplay(ts);
+    const myTeam = m.myTeam;
+    const isDeuce = ts.pA >= 3 && ts.pB >= 3 && ts.adTeam === null && !ts.isTiebreak;
+    const myScore = myTeam === "A" ? score.a : score.b;
+    const oppScore = myTeam === "A" ? score.b : score.a;
+    const myGames = myTeam === "A" ? ts.gamesA : ts.gamesB;
+    const oppGames = myTeam === "A" ? ts.gamesB : ts.gamesA;
+    const myIds = myTeam === "A" ? m.teamAPlayerIds : m.teamBPlayerIds;
+    const oppIds = myTeam === "A" ? m.teamBPlayerIds : m.teamAPlayerIds;
+    const partnerId2 = myIds.find(id => id !== pid) ?? "";
+    const partnerName2 = nameMap[partnerId2] ?? "Partner";
+    const opp1Name = nameMap[oppIds[0]] ?? "Opp 1";
+    const opp2Name = nameMap[oppIds[1]] ?? "Opp 2";
+
+    const currentServerId = getCurrentTennisServer(serveState, m.teamAPlayerIds, m.teamBPlayerIds);
+    const currentServerTeam: "A" | "B" | null = currentServerId
+      ? (m.teamAPlayerIds.includes(currentServerId) ? "A" : "B")
+      : null;
+    const isMyTeamServing = currentServerTeam === myTeam;
+
+    const myAdv = ts.adTeam === myTeam;
+    const myHalfBg = myAdv
+      ? "rgba(255,107,0,0.35)"
+      : "rgba(255,107,0,0.18)";
+
+    const setLabel2 = `Set ${ts.setIndex + 1}${ts.isTiebreak ? (ts.tiebreakTarget === 10 ? " · Super TB" : " · TB") : ""}`;
+
+    return (
+      <div
+        style={{ ...wrap, padding: 0, gap: 0 }}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
+        {reconnecting && <div style={{ fontSize: 10, color: "#555", textAlign: "center" }}>Reconnecting...</div>}
+
+        {/* Your team — top half */}
+        <div
+          style={{ flex: 1, background: myHalfBg, borderRadius: "14px 14px 4px 4px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 44, cursor: "pointer" }}
+          onClick={() => addTennisPointOnWatch(myTeam)}
+          onMouseDown={onPressStart}
+          onMouseUp={onPressEnd}
+          onTouchStart={(e) => { onTouchStart(e); onPressStart(); }}
+          onTouchEnd={(e) => { onPressEnd(); onTouchEnd(e); }}
+        >
+          <div style={{ fontSize: 13, color: ORANGE, fontWeight: 500 }}>
+            You &amp; {partnerName2}
+            {isMyTeamServing && <ServeDot />}
+          </div>
+          <div style={{ fontSize: isDeuce ? 28 : 48, fontWeight: 600, color: WHITE, lineHeight: 1.2 }}>{myScore}</div>
+        </div>
+
+        {/* Score strip */}
+        <div style={{ padding: "4px 12px", background: "rgba(0,0,0,0.35)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: myTeam === "A" ? ORANGE : "#ccc" }}>{myGames}</span>
+          <span style={{ fontSize: 10, color: "#555" }}>{setLabel2} · games</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: myTeam === "B" ? ORANGE : "#ccc" }}>{oppGames}</span>
+        </div>
+
+        {/* Opponents — bottom half */}
+        <div
+          style={{ flex: 1, background: ts.adTeam && ts.adTeam !== myTeam ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)", borderRadius: "4px 4px 14px 14px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 44, cursor: "pointer" }}
+          onClick={() => addTennisPointOnWatch(myTeam === "A" ? "B" : "A")}
+          onMouseDown={onPressStart}
+          onMouseUp={onPressEnd}
+          onTouchStart={(e) => { onTouchStart(e); onPressStart(); }}
+          onTouchEnd={(e) => { onPressEnd(); onTouchEnd(e); }}
+        >
+          <div style={{ fontSize: 13, color: "#aaa" }}>
+            {opp1Name} &amp; {opp2Name}
+            {!isMyTeamServing && currentServerId !== null && <ServeDot />}
+          </div>
+          <div style={{ fontSize: isDeuce ? 28 : 48, fontWeight: 600, color: "#cccccc", lineHeight: 1.2 }}>{oppScore}</div>
+        </div>
+      </div>
+    );
+  }
+
   // ── SCREEN: unsupported ──────────────────────────────────────────────────
   if (screen === "unsupported") {
     return (
