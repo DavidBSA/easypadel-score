@@ -9,7 +9,7 @@ const ORANGE = "#FF6B00";
 const GREEN = "#00C851";
 const RED = "#FF4040";
 
-type WatchScreen = "loading" | "waiting" | "scoring" | "serve" | "complete" | "leaderboard" | "unsupported";
+type WatchScreen = "loading" | "waiting" | "scoring" | "serve" | "complete" | "leaderboard" | "unsupported" | "server-picker" | "tennis-scoring" | "tennis-complete";
 
 type MatchInfo = {
   matchId: string;
@@ -27,6 +27,28 @@ type MatchInfo = {
 type PlayerInfo = { id: string; name: string };
 type LeaderRow = { id: string; name: string; diff: number; pointsFor: number };
 
+type DeuceMode = "star" | "golden" | "traditional";
+type MatchRules = { deuceMode: DeuceMode; tiebreak: boolean; superTiebreak: boolean };
+type TennisPayload = { sets: number; rules: MatchRules };
+type TTeam = "A" | "B";
+type TSnap = {
+  gamesA: number; gamesB: number; setsA: number; setsB: number; setIndex: number;
+  pA: number; pB: number; adTeam: TTeam | null; deuceCount: number;
+  isTiebreak: boolean; tiebreakTarget: number; tbA: number; tbB: number; tbPointNumber: number;
+  tbServingTeam: TTeam; tbPointsLeftInTurn: number;
+  servingTeam: TTeam; nextServerA: 0 | 1; nextServerB: 0 | 1;
+  matchOver: boolean; winner: TTeam | null;
+};
+const T0: TSnap = { gamesA: 0, gamesB: 0, setsA: 0, setsB: 0, setIndex: 0, pA: 0, pB: 0, adTeam: null, deuceCount: 0, isTiebreak: false, tiebreakTarget: 7, tbA: 0, tbB: 0, tbPointNumber: 0, tbServingTeam: "A", tbPointsLeftInTurn: 1, servingTeam: "A", nextServerA: 0, nextServerB: 0, matchOver: false, winner: null };
+
+type ServeState = {
+  setFirstServingTeam: "A" | "B" | null;
+  game1ServerId: string | null;
+  game2ServerId: string | null;
+  gamesPlayedInSet: number;
+};
+const SERVE0: ServeState = { setFirstServingTeam: null, game1ServerId: null, game2ServerId: null, gamesPlayedInSet: 0 };
+
 type SMatch = {
   id: string; queuePosition: number; courtNumber: number | null;
   status: "PENDING" | "IN_PROGRESS" | "COMPLETE";
@@ -37,6 +59,7 @@ type SSession = {
   code: string; status: string; courts: number; pointsPerMatch: number;
   servesPerRotation: number | null;
   format?: string;
+  matchRules?: TennisPayload | null;
   players: { id: string; name: string; isActive: boolean }[];
   matches: SMatch[];
 };
@@ -71,6 +94,22 @@ function buildLeaderboard(session: SSession): LeaderRow[] {
   }
   return Array.from(map.values()).sort((a, b) => b.diff - a.diff || b.pointsFor - a.pointsFor);
 }
+
+function setsToWin(n: number) { return Math.ceil(n / 2); }
+function isFinalSet(idx: number, total: number) { return idx === total - 1; }
+function shouldUseSuperTB(tp: TennisPayload, idx: number) { return tp.rules.superTiebreak && isFinalSet(idx, tp.sets) && tp.sets > 1; }
+function tbWinner(a: number, b: number, target: number): TTeam | null { if ((a >= target || b >= target) && Math.abs(a - b) >= 2) return a > b ? "A" : "B"; return null; }
+function normalSetWinner(a: number, b: number): TTeam | null { if ((a >= 6 || b >= 6) && Math.abs(a - b) >= 2) return a > b ? "A" : "B"; return null; }
+function tog(v: 0 | 1): 0 | 1 { return v === 0 ? 1 : 0; }
+function clamp(n: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, n)); }
+function checkMatchWinner(s: TSnap, tp: TennisPayload): TSnap { const needed = setsToWin(tp.sets); if (s.setsA >= needed) return { ...s, matchOver: true, winner: "A" }; if (s.setsB >= needed) return { ...s, matchOver: true, winner: "B" }; return s; }
+function startTiebreak(s: TSnap, target: number): TSnap { return { ...s, isTiebreak: true, tiebreakTarget: target, tbA: 0, tbB: 0, tbPointNumber: 0, tbServingTeam: s.servingTeam, tbPointsLeftInTurn: 1, pA: 0, pB: 0, adTeam: null, deuceCount: 0 }; }
+function rotateServeAfterGame(s: TSnap): TSnap { if (s.servingTeam === "A") return { ...s, nextServerA: tog(s.nextServerA), servingTeam: "B" }; return { ...s, nextServerB: tog(s.nextServerB), servingTeam: "A" }; }
+function rotateServeAfterTBPoint(s: TSnap): TSnap { const rem = s.tbPointsLeftInTurn - 1; if (rem > 0) return { ...s, tbPointsLeftInTurn: rem }; const newTeam: TTeam = s.tbServingTeam === "A" ? "B" : "A"; const n = { ...s, tbServingTeam: newTeam, tbPointsLeftInTurn: 2 }; if (newTeam === "A") n.nextServerA = tog(n.nextServerA); else n.nextServerB = tog(n.nextServerB); return n; }
+function winGame(s: TSnap, w: TTeam, tp: TennisPayload): TSnap { let n: TSnap = { ...s }; if (w === "A") n.gamesA += 1; else n.gamesB += 1; n.pA = 0; n.pB = 0; n.adTeam = null; n.deuceCount = 0; n = rotateServeAfterGame(n); const sw = normalSetWinner(n.gamesA, n.gamesB); if (sw) { if (sw === "A") n.setsA += 1; else n.setsB += 1; n.gamesA = 0; n.gamesB = 0; n.isTiebreak = false; n.tiebreakTarget = 7; n.tbA = 0; n.tbB = 0; n.tbPointNumber = 0; n.tbServingTeam = n.servingTeam; n.tbPointsLeftInTurn = 1; n.setIndex += 1; n = checkMatchWinner(n, tp); if (!n.matchOver && shouldUseSuperTB(tp, n.setIndex)) n = startTiebreak(n, 10); return n; } if (tp.rules.tiebreak && !shouldUseSuperTB(tp, s.setIndex) && n.gamesA === 6 && n.gamesB === 6) n = startTiebreak(n, 7); return n; }
+function winTBAsSet(s: TSnap, w: TTeam, tp: TennisPayload): TSnap { let n: TSnap = { ...s }; if (w === "A") n.setsA += 1; else n.setsB += 1; n.isTiebreak = false; n.tiebreakTarget = 7; n.tbA = 0; n.tbB = 0; n.tbPointNumber = 0; n.tbPointsLeftInTurn = 1; n.gamesA = 0; n.gamesB = 0; n.pA = 0; n.pB = 0; n.adTeam = null; n.deuceCount = 0; n.setIndex += 1; n = checkMatchWinner(n, tp); if (!n.matchOver && shouldUseSuperTB(tp, n.setIndex)) n = startTiebreak(n, 10); return n; }
+function addTennisPoint(prev: TSnap, team: TTeam, tp: TennisPayload): TSnap { if (prev.matchOver) return prev; if (prev.isTiebreak) { let n: TSnap = { ...prev }; if (team === "A") n.tbA += 1; else n.tbB += 1; n.tbPointNumber += 1; n = rotateServeAfterTBPoint(n); const w = tbWinner(n.tbA, n.tbB, n.tiebreakTarget); if (w) n = winTBAsSet(n, w, tp); return n; } const mode = tp.rules.deuceMode; if (prev.pA >= 3 && prev.pB >= 3) { if (mode === "golden") return winGame(prev, team, tp); if (mode === "star") { if (prev.adTeam === null) return { ...prev, adTeam: team }; if (prev.adTeam === team) return winGame(prev, team, tp); return { ...prev, adTeam: null, deuceCount: prev.deuceCount + 1 }; } if (prev.adTeam === null) return { ...prev, adTeam: team }; if (prev.adTeam === team) return winGame(prev, team, tp); return { ...prev, adTeam: null }; } let n: TSnap = { ...prev }; if (team === "A") n.pA += 1; else n.pB += 1; if (n.pA >= 4 && n.pB <= 2) return winGame(prev, "A", tp); if (n.pB >= 4 && n.pA <= 2) return winGame(prev, "B", tp); if (n.pA >= 3 && n.pB >= 3) { if (mode === "star" && n.deuceCount >= 2) return winGame({ ...n }, team, tp); if (mode === "golden") return winGame({ ...n }, team, tp); } return n; }
+function getScoreDisplay(s: TSnap): { a: string; b: string } { if (s.isTiebreak) return { a: String(s.tbA), b: String(s.tbB) }; const map = ["0", "15", "30", "40"]; if (s.pA >= 3 && s.pB >= 3) { if (s.adTeam === "A") return { a: "AD", b: "—" }; if (s.adTeam === "B") return { a: "—", b: "AD" }; return { a: "DEUCE", b: "DEUCE" }; } return { a: map[clamp(s.pA, 0, 3)], b: map[clamp(s.pB, 0, 3)] }; }
 
 // ── Pulse animation injected once ──────────────────────────────────────────
 const PULSE_CSS = `@keyframes eps-pulse{0%,100%{opacity:0.4}50%{opacity:1}}`;
@@ -107,14 +146,6 @@ function WatchContent({ code }: { code: string }) {
   function goToScreen(s: WatchScreen) { screenRef.current = s; setScreen(s); }
 
   useEffect(() => {
-    const btn = document.querySelector('[data-bug-report-button]');
-    if (btn) (btn as HTMLElement).style.display = 'none';
-    return () => {
-      if (btn) (btn as HTMLElement).style.display = '';
-    };
-  }, []);
-
-  useEffect(() => {
     const style = document.createElement("style");
     style.textContent = PULSE_CSS;
     document.head.appendChild(style);
@@ -140,7 +171,8 @@ function WatchContent({ code }: { code: string }) {
   }, [code]);
 
   const processSession = useCallback((data: SSession) => {
-    if (data.format && data.format !== "AMERICANO" && data.format !== "TEAM_AMERICANO") {
+    console.log("[watch] session.format:", data.format);
+    if (data.format === "SINGLE") {
       goToScreen("unsupported");
       return;
     }
@@ -421,15 +453,30 @@ function WatchContent({ code }: { code: string }) {
               <div style={{ fontSize: 13, color: "#aaa" }}>
                 {nextQueuedMatch.courtNumber ? `Court ${nextQueuedMatch.courtNumber}` : "Court TBD"}{waitMins ? ` · ~${waitMins} min` : ""}
               </div>
-              <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>vs</div>
-              <div style={{ fontSize: 15, fontWeight: 500, color: WHITE, textAlign: "center" }}>
-                {(() => {
-                  const isMyTeamA = [nextQueuedMatch.teamAPlayer1, nextQueuedMatch.teamAPlayer2].includes(pid);
-                  const o1 = isMyTeamA ? nameMap[nextQueuedMatch.teamBPlayer1] : nameMap[nextQueuedMatch.teamAPlayer1];
-                  const o2 = isMyTeamA ? nameMap[nextQueuedMatch.teamBPlayer2] : nameMap[nextQueuedMatch.teamAPlayer2];
-                  return `${o1 ?? "?"} & ${o2 ?? "?"}`;
-                })()}
-              </div>
+              {(() => {
+                const isMyTeamA = [nextQueuedMatch.teamAPlayer1, nextQueuedMatch.teamAPlayer2].includes(pid);
+                const myTeamIds = isMyTeamA
+                  ? [nextQueuedMatch.teamAPlayer1, nextQueuedMatch.teamAPlayer2]
+                  : [nextQueuedMatch.teamBPlayer1, nextQueuedMatch.teamBPlayer2];
+                const oppTeamIds = isMyTeamA
+                  ? [nextQueuedMatch.teamBPlayer1, nextQueuedMatch.teamBPlayer2]
+                  : [nextQueuedMatch.teamAPlayer1, nextQueuedMatch.teamAPlayer2];
+                const nextPartnerId = myTeamIds.find(id => id !== pid);
+                const partnerNameNext = nextPartnerId ? (nameMap[nextPartnerId] ?? "?") : null;
+                const o1 = nameMap[oppTeamIds[0]] ?? "?";
+                const o2 = nameMap[oppTeamIds[1]] ?? "?";
+                return (
+                  <>
+                    <div style={{ fontSize: 15, fontWeight: 500, color: ORANGE, textAlign: "center", marginTop: 6 }}>
+                      You{partnerNameNext ? ` & ${partnerNameNext}` : ""}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#666" }}>vs</div>
+                    <div style={{ fontSize: 15, fontWeight: 500, color: WHITE, textAlign: "center" }}>
+                      {o1} &amp; {o2}
+                    </div>
+                  </>
+                );
+              })()}
             </>
           ) : (
             <div style={{ fontSize: 14, color: "#aaa", textAlign: "center" }}>Waiting for next match</div>
