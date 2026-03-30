@@ -360,8 +360,130 @@ function WatchContent({ code }: { code: string }) {
     }
   }
 
+  function getCurrentTennisServer(ss: ServeState, teamAIds: string[], teamBIds: string[]): string | null {
+    const { game1ServerId, game2ServerId, gamesPlayedInSet } = ss;
+    if (!game1ServerId || !game2ServerId) return null;
+    const partnerOf = (id: string) => {
+      const team = teamAIds.includes(id) ? teamAIds : teamBIds;
+      return team.find(p => p !== id) ?? null;
+    };
+    const rotation = [
+      game1ServerId,
+      game2ServerId,
+      partnerOf(game1ServerId),
+      partnerOf(game2ServerId),
+    ];
+    return rotation[gamesPlayedInSet % 4] ?? null;
+  }
+
+  function getNextTennisServer(ss: ServeState, teamAIds: string[], teamBIds: string[]): string | null {
+    const nextSs = { ...ss, gamesPlayedInSet: ss.gamesPlayedInSet + 1 };
+    return getCurrentTennisServer(nextSs, teamAIds, teamBIds);
+  }
+
+  function needsServerPicker(ss: ServeState): boolean {
+    return (ss.gamesPlayedInSet === 0 && ss.game1ServerId === null) ||
+           (ss.gamesPlayedInSet === 1 && ss.game2ServerId === null);
+  }
+
+  function getServerPickerCandidates(
+    ss: ServeState,
+    teamAIds: string[],
+    teamBIds: string[]
+  ): string[] {
+    if (ss.gamesPlayedInSet === 0) {
+      // Game 1: show all 4 players if first serve team unknown, or just the serving team
+      if (ss.setFirstServingTeam === null) return [...teamAIds, ...teamBIds];
+      return ss.setFirstServingTeam === "A" ? teamAIds : teamBIds;
+    }
+    // Game 2: show players from the team that did NOT serve game 1
+    if (!ss.game1ServerId) return [...teamAIds, ...teamBIds];
+    const game1Team: "A" | "B" = teamAIds.includes(ss.game1ServerId) ? "A" : "B";
+    return game1Team === "A" ? teamBIds : teamAIds;
+  }
+
+  function pickServer(playerId: string) {
+    const m = matchRef.current;
+    if (!m) return;
+    const ss = serveStateRef.current;
+    let next: ServeState;
+
+    if (ss.gamesPlayedInSet === 0) {
+      const servingTeam: "A" | "B" = m.teamAPlayerIds.includes(playerId) ? "A" : "B";
+      next = { ...ss, game1ServerId: playerId, setFirstServingTeam: servingTeam };
+      serveStateRef.current = next;
+      setServeState(next);
+      goToScreen("tennis-scoring");
+    } else if (ss.gamesPlayedInSet === 1) {
+      next = { ...ss, game2ServerId: playerId };
+      serveStateRef.current = next;
+      setServeState(next);
+      goToScreen("tennis-scoring");
+    }
+  }
+
+  function addTennisPointOnWatch(team: "A" | "B") {
+    const tp = tennisPayload;
+    const m = matchRef.current;
+    if (!tp || !m) return;
+
+    const prev = tennisStateRef.current;
+
+    // Push to history stack (cap at 10)
+    tennisHistoryRef.current = [...tennisHistoryRef.current.slice(-9), prev];
+
+    const next = addTennisPoint(prev, team, tp);
+    tennisStateRef.current = next;
+    setTennisState(next);
+
+    // Detect game completion within same set
+    if (next.setIndex === prev.setIndex && next.gamesA + next.gamesB > prev.gamesA + prev.gamesB) {
+      const newSs = { ...serveStateRef.current, gamesPlayedInSet: serveStateRef.current.gamesPlayedInSet + 1 };
+      serveStateRef.current = newSs;
+      setServeState(newSs);
+      if (!next.matchOver && needsServerPicker(newSs)) goToScreen("server-picker");
+    }
+
+    // Detect set completion (setIndex increased, games reset)
+    if (next.setIndex > prev.setIndex && !next.matchOver) {
+      // The new set's first serving team is opposite of prev.servingTeam (which just served the last game)
+      const newSetFirstServing: "A" | "B" = prev.servingTeam === "A" ? "B" : "A";
+      const newSs: ServeState = { setFirstServingTeam: newSetFirstServing, game1ServerId: null, game2ServerId: null, gamesPlayedInSet: 0 };
+      serveStateRef.current = newSs;
+      setServeState(newSs);
+      goToScreen("server-picker");
+    }
+
+    // Match over
+    if (next.matchOver && !tennisSubmittedRef.current) {
+      tennisSubmittedRef.current = true;
+      goToScreen("tennis-complete");
+      const did = deviceIdRef.current;
+      if (did) {
+        fetch(`/api/matches/${m.matchId}/score`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pointsA: next.setsA, pointsB: next.setsB, deviceId: did, isPlayerSubmission: true }),
+        }).catch(() => {});
+      }
+    }
+  }
+
   function undoPoint() {
     if (!matchRef.current) return;
+    const cur = screenRef.current;
+
+    if (cur === "tennis-scoring") {
+      const history = tennisHistoryRef.current;
+      if (history.length === 0) return;
+      const prev = history[history.length - 1];
+      tennisHistoryRef.current = history.slice(0, -1);
+      tennisStateRef.current = prev;
+      setTennisState(prev);
+      return;
+    }
+
+    // Americano undo
     const lastTeam = lastTapTeamRef.current;
     const newA = lastTeam === "A" ? Math.max(0, localARef.current - 1) : localARef.current;
     const newB = lastTeam === "B" ? Math.max(0, localBRef.current - 1) : localBRef.current;
