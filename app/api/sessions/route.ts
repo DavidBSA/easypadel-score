@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { format, courts, pointsPerMatch, servesPerRotation, maxPlayers, scheduledAt } = body;
+    const { format, courts, pointsPerMatch, servesPerRotation, maxPlayers, scheduledAt, matchRules } = body;
 
     if (!format || !["SINGLE", "MIXED", "TEAM"].includes(format)) {
       return NextResponse.json({ error: "Invalid format" }, { status: 400 });
@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
           servesPerRotation: servesPerRotation ?? 4,
           maxPlayers: maxPlayers ?? null,
           scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+          matchRules: matchRules ?? null,
           ownerAccountId: account.id,
         },
       });
