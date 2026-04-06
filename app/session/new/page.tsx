@@ -48,6 +48,7 @@ export default function NewSessionPage() {
     return d.toISOString().slice(0, 10);
   });
   const [scheduledTime, setScheduledTime] = useState("09:00");
+  const [sessionName, setSessionName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -110,6 +111,7 @@ export default function NewSessionPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          name: sessionName.trim() || null,
           format,
           courts: effectiveCourts,
           pointsPerMatch: isSingle ? 0 : pointsPerMatch,
@@ -298,6 +300,16 @@ export default function NewSessionPage() {
             </div>
           )
         */}
+
+        <div style={st.sectionLabel}>Session name (optional)</div>
+        <input
+          type="text"
+          value={sessionName}
+          onChange={(e) => setSessionName(e.target.value)}
+          placeholder="e.g. Sunday Friendly Americano"
+          maxLength={60}
+          style={{ background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 12, padding: "14px 16px", fontSize: 16, outline: "none", fontWeight: 900, width: "100%", boxSizing: "border-box" as const }}
+        />
 
         <div style={st.sectionLabel}>Format</div>
         <div style={st.formatGrid}>

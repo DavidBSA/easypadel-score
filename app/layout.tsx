@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import BugReportButton from "@/components/BugReportButton";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import BugReportFooter from "@/components/BugReportFooter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -44,7 +44,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
-        <BugReportButton />
+        <BugReportFooter />
       </body>
     </html>
   );

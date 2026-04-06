@@ -96,7 +96,7 @@ function getScoreDisplay(s: TSnap): { a: string; b: string } { if (s.isTiebreak)
 type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number; submittedAt: string };
 type Match = { id: string; queuePosition: number; courtNumber: number | null; status: "PENDING" | "IN_PROGRESS" | "COMPLETE"; teamAPlayer1: string; teamAPlayer2: string; teamBPlayer1: string; teamBPlayer2: string; pointsA: number | null; pointsB: number | null; scoreStatus: "PENDING" | "CONFIRMED" | "CONFLICT" | null; scoreSubmissions: ScoreSubmission[]; startedAt: string | null; completedAt: string | null; };
-type Session = { id: string; code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; players: Player[]; matches: Match[]; createdAt: string; scheduledAt: string | null; };
+type Session = { id: string; code: string; name?: string | null; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; players: Player[]; matches: Match[]; createdAt: string; scheduledAt: string | null; };
 type LeaderRow = { playerId: string; name: string; played: number; wins: number; draws: number; losses: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type CourtScore = { rawA: string };
 type OrgScoringMode = "final" | "live";
@@ -470,7 +470,7 @@ export default function OrganiserPage() {
 
     return (
       <div style={st.page}><div style={st.card}>
-        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div><div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div><button style={st.btn} onClick={() => router.push("/")}>Home</button></div>
+        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div><button style={st.btn} onClick={() => router.push("/")}>Home</button></div>
         <div style={st.pillsRow}>{pill(session.players.length + " joined", "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}{isSingle ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)") : pill(minPlayers + " needed to start", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}</div>
         {shareCard}
         {isSingle && <div style={{ marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.5 }}>Players can join using the session code above, or you can add them manually below.</div>}
@@ -810,7 +810,7 @@ export default function OrganiserPage() {
   return (
     <div style={st.page}><div style={st.card}>
       <div style={st.row}>
-        <div><div style={st.title}>Organiser · {code}</div><div style={st.sub}>{subtitleParts.join(" · ")}</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div>
+        <div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{subtitleParts.join(" · ")}</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           {session.status === "ACTIVE" && <button style={{ ...st.btnRed, opacity: inProgress.length > 0 ? 0.35 : 1 }} onClick={() => { if (inProgress.length === 0) { setEndConfirm(true); setEndError(""); } }} disabled={inProgress.length > 0}>End session</button>}
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>

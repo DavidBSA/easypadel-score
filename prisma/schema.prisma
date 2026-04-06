@@ -34,6 +34,7 @@ enum ScoreStatus {
 model Session {
   id                 String        @id @default(cuid())
   code               String        @unique
+  name               String?
   organiserPin       String
   format             SessionFormat
   status             SessionStatus @default(LOBBY)

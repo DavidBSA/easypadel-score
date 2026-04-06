@@ -55,7 +55,7 @@ type Match = {
   scoreSubmissions: ScoreSubmission[];
 };
 type Session = {
-  code: string; format: "SINGLE" | "MIXED" | "TEAM"; status: string;
+  code: string; name?: string | null; format: "SINGLE" | "MIXED" | "TEAM"; status: string;
   courts: number; pointsPerMatch: number; servesPerRotation: number | null;
   players: Player[]; matches: Match[]; scheduledAt: string | null;
   matchRules?: TennisPayload | null;
@@ -749,7 +749,7 @@ export default function PlayerPage() {
   return (
     <div style={st.page}><div style={st.card}>
       <div style={st.row}>
-        <div><div style={st.title}>Hi, {selectedPlayer.name}</div><div style={st.sub}>Session {code} · {session ? formatLabel(session.format) : ""}</div></div>
+        <div><div style={st.title}>Hi, {selectedPlayer.name}</div><div style={st.sub}>Session {code} · {session ? formatLabel(session.format) : ""}</div>{session?.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}</div>
         {!sessionComplete && (
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             <button style={showLeaderboard ? st.btnActive : st.btn} onClick={() => setShowLeaderboard((v) => !v)}>🏅</button>

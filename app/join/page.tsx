@@ -21,6 +21,7 @@ function JoinForm() {
   const [teamName, setTeamName] = useState("");
   const [sessionFormat, setSessionFormat] = useState<SessionFormat>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>(null);
+  const [sessionName, setSessionName] = useState<string | null>(null);
   const [formatLoading, setFormatLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -28,7 +29,7 @@ function JoinForm() {
 
   useEffect(() => {
     const c = code.trim().toUpperCase();
-    if (c.length !== 4) { setSessionFormat(null); setSessionStatus(null); return; }
+    if (c.length !== 4) { setSessionFormat(null); setSessionStatus(null); setSessionName(null); return; }
     setFormatLoading(true);
     setError("");
     fetch(`/api/sessions/${c}`)
@@ -36,8 +37,9 @@ function JoinForm() {
       .then((data) => {
         if (data?.format) setSessionFormat(data.format); else setSessionFormat(null);
         if (data?.status) setSessionStatus(data.status as SessionStatus); else setSessionStatus(null);
+        setSessionName(data?.name ?? null);
       })
-      .catch(() => { setSessionFormat(null); setSessionStatus(null); })
+      .catch(() => { setSessionFormat(null); setSessionStatus(null); setSessionName(null); })
       .finally(() => setFormatLoading(false));
   }, [code]);
 
@@ -130,6 +132,10 @@ function JoinForm() {
               {sessionFormat === "TEAM" ? "Team Americano" : sessionFormat === "MIXED" ? "Mixed Americano" : "Single Match"}
             </span>
           </div>
+        )}
+
+        {sessionName && !formatLoading && (
+          <div style={{ fontSize: 20, fontWeight: 1000, color: WHITE, textAlign: "center", marginBottom: 4, marginTop: 8 }}>{sessionName}</div>
         )}
 
         {/* ── Session locked warning ── */}
