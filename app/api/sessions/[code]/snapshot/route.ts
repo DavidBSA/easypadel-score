@@ -12,10 +12,6 @@ export async function GET(
     include: {
       players: true,
       matches: {
-        include: {
-          teamAPlayers: true,
-          teamBPlayers: true,
-        },
         orderBy: { createdAt: "asc" },
       },
     },

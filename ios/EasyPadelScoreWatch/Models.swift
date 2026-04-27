@@ -5,13 +5,16 @@ enum WatchScreen {
     case joining, loading, waiting, scoring, serve, complete, leaderboard
 }
 
-// MARK: — API response models (must match Prisma schema exactly)
+// MARK: — API response models (matching Prisma schema)
 
 struct SessionSnapshot: Codable {
     let id: String
     let code: String
-    let status: String       // "LOBBY" | "ACTIVE" | "COMPLETE"
+    let status: String          // "LOBBY" | "ACTIVE" | "COMPLETE"
     let name: String?
+    let courts: Int
+    let pointsPerMatch: Int
+    let servesPerRotation: Int?
     let players: [SessionPlayer]
     let matches: [SessionMatch]
 }
@@ -23,16 +26,24 @@ struct SessionPlayer: Codable, Identifiable {
 
 struct SessionMatch: Codable, Identifiable {
     let id: String
-    let status: String       // "PENDING" | "IN_PROGRESS" | "COMPLETE"
+    let status: String          // "PENDING" | "IN_PROGRESS" | "COMPLETE"
     let courtNumber: Int?
-    let pointsA: Int
-    let pointsB: Int
-    let pointsPerMatch: Int
-    let servesPerRotation: Int
-    let firstServeTeam: String  // "A" | "B"
-    let roundNumber: Int
-    let teamAPlayers: [SessionPlayer]
-    let teamBPlayers: [SessionPlayer]
+    let queuePosition: Int
+    let teamAPlayer1: String    // player IDs
+    let teamAPlayer2: String
+    let teamBPlayer1: String
+    let teamBPlayer2: String
+    let pointsA: Int?
+    let pointsB: Int?
+
+    func containsPlayer(_ playerId: String) -> Bool {
+        teamAPlayer1 == playerId || teamAPlayer2 == playerId ||
+        teamBPlayer1 == playerId || teamBPlayer2 == playerId
+    }
+
+    func teamFor(playerId: String) -> String {
+        (teamAPlayer1 == playerId || teamAPlayer2 == playerId) ? "A" : "B"
+    }
 }
 
 // MARK: — Derived view models
@@ -40,17 +51,16 @@ struct SessionMatch: Codable, Identifiable {
 struct MatchInfo {
     let matchId: String
     let courtNumber: Int
-    let myTeam: String           // "A" or "B"
+    let myTeam: String              // "A" or "B"
     let myTeamPlayers: [SessionPlayer]
     let opponentPlayers: [SessionPlayer]
     var pointsA: Int
     var pointsB: Int
     let pointsPerMatch: Int
     let servesPerRotation: Int
-    let firstServeTeam: String
     let roundNumber: Int
 
-    var myScore: Int  { myTeam == "A" ? pointsA : pointsB }
+    var myScore: Int    { myTeam == "A" ? pointsA : pointsB }
     var theirScore: Int { myTeam == "A" ? pointsB : pointsA }
     var totalPoints: Int { pointsA + pointsB }
 }
@@ -76,16 +86,4 @@ struct ScoreBody: Encodable {
     let pointsB: Int
     let deviceId: String
     let isPlayerSubmission: Bool
-}
-
-// MARK: — Join API body / response
-
-struct JoinBody: Encodable {
-    let name: String
-    let deviceId: String
-}
-
-struct JoinResponse: Codable {
-    let playerId: String
-    let deviceId: String
 }
