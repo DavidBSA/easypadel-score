@@ -128,24 +128,28 @@ export default function AccountPage() {
 
         {account.tier === "FREE" ? (
           <div>
-            <div style={{ fontSize: 14, color: WARM_WHITE, opacity: 0.7, marginBottom: 12 }}>
-              Upgrade to create and manage your own sessions.
+            <div style={{ fontSize: 11, fontWeight: 1000, color: ORANGE, letterSpacing: 1, textTransform: "uppercase" as const, marginBottom: 10 }}>
+              Upgrade your plan
             </div>
-            <button
-              onClick={() => alert("Upgrade plans coming soon via the App Store.")}
-              style={{
-                background: ORANGE,
-                color: WHITE,
-                border: "none",
-                borderRadius: 12,
-                padding: "10px 20px",
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Upgrade plan
-            </button>
+            <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 12 }}>
+              Paid plans are coming soon via the App Store. Here&apos;s what&apos;s available:
+            </div>
+            {[
+              { name: "BAJADA", price: "$4 once-off", desc: "1 session at a time" },
+              { name: "BANDEJA", price: "$7/mo · $70/yr", desc: "1 active session at a time" },
+              { name: "VIBORA", price: "$12/mo · $120/yr", desc: "Unlimited concurrent sessions" },
+            ].map((t) => (
+              <div key={t.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                <div>
+                  <div style={{ color: ORANGE, fontWeight: 1000 }}>{t.name}</div>
+                  <div style={{ opacity: 0.55, fontSize: 12 }}>{t.desc}</div>
+                </div>
+                <div style={{ color: WHITE, fontWeight: 900, fontSize: 13 }}>{t.price}</div>
+              </div>
+            ))}
+            <div style={{ fontSize: 12, opacity: 0.45, marginTop: 12, fontStyle: "italic" as const }}>
+              Plans will be purchasable directly in the app. No action needed right now.
+            </div>
           </div>
         ) : (
           <div

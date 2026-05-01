@@ -73,7 +73,14 @@ export default function NewSessionPage() {
         return null;
       })
       .then((data) => {
-        if (data) { setAccountInfo(data); setAuthStatus("ok"); }
+        if (data) {
+          setAccountInfo(data);
+          if (data.tier === "FREE") {
+            setAuthStatus("upgrade");
+          } else {
+            setAuthStatus("ok");
+          }
+        }
       })
       .catch(() => setAuthStatus("unauthed"));
   }, []);
@@ -220,11 +227,70 @@ export default function NewSessionPage() {
 
   const effectiveMaxTeams = Math.max(maxTeams, minTeams);
 
+  const UPGRADE_TIERS = [
+    { name: "BAJADA", price: "$4 once-off", desc: "1 session at a time" },
+    { name: "BANDEJA", price: "$7/mo · $70/yr", desc: "1 active session at a time" },
+    { name: "VIBORA", price: "$12/mo · $120/yr", desc: "Unlimited concurrent sessions" },
+  ];
+
   // ── Loading state ──────────────────────────────────────────────────────────
   if (authStatus === "loading") {
     return (
       <div style={{ minHeight: "100vh", background: BLACK, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.4)", fontSize: 15 }}>
         Checking account…
+      </div>
+    );
+  }
+
+  // ── Upgrade screen ────────────────────────────────────────────────────────
+  if (authStatus === "upgrade") {
+    return (
+      <div style={{ minHeight: "100vh", background: NAVY, color: WHITE, display: "flex", justifyContent: "center", alignItems: "flex-start", padding: 24 }}>
+        <div style={{ width: "100%", maxWidth: 420, marginTop: 24, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 24, boxSizing: "border-box" as const }}>
+
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 22, fontWeight: 1000, color: WHITE }}>Create Session</div>
+            <div style={{ fontSize: 13, opacity: 0.5, marginTop: 4 }}>Paid plans · Coming soon</div>
+          </div>
+
+          {accountInfo && (
+            <div style={{ background: "rgba(0,200,81,0.07)", border: "1px solid rgba(0,200,81,0.20)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 900, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <span>✓ Signed in as {accountInfo.email}</span>
+              <span style={{ background: "rgba(255,255,255,0.12)", borderRadius: 999, padding: "3px 10px", fontSize: 11 }}>FREE</span>
+            </div>
+          )}
+
+          <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "16px 0" }} />
+
+          <div style={{ fontSize: 14, lineHeight: 1.6, opacity: 0.75, color: WHITE }}>
+            To create and manage sessions you&apos;ll need a paid plan. Plans will be available to purchase directly in the app very soon.
+          </div>
+
+          <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "16px 0" }} />
+
+          {UPGRADE_TIERS.map((t) => (
+            <div key={t.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <div>
+                <div style={{ color: ORANGE, fontWeight: 1000, fontSize: 15 }}>{t.name}</div>
+                <div style={{ fontSize: 12, opacity: 0.55 }}>{t.desc}</div>
+              </div>
+              <div style={{ color: WHITE, fontWeight: 900, fontSize: 14, textAlign: "right" as const }}>{t.price}</div>
+            </div>
+          ))}
+
+          <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "16px 0" }} />
+
+          <div style={{ background: "rgba(0,200,81,0.06)", border: "1px solid rgba(0,200,81,0.15)", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: GREEN, fontWeight: 900, marginBottom: 16 }}>
+            ✓ Join any session — always free, no account needed
+          </div>
+
+          <button
+            style={{ width: "100%", background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: 14, fontSize: 15, fontWeight: 900, color: WHITE, cursor: "pointer" }}
+            onClick={() => router.push("/")}
+          >
+            Back to home
+          </button>
+        </div>
       </div>
     );
   }
@@ -291,15 +357,6 @@ export default function NewSessionPage() {
             </span>
           </div>
         )}
-
-        {/* UPGRADE GATE — wire up when Apple IAP is ready
-          authStatus === "upgrade" && (
-            <div style={upgradePromptStyle}>
-              <div>Create sessions from $4 · Upgrade in the App Store</div>
-              <button onClick={() => router.push("/account")}>View plans</button>
-            </div>
-          )
-        */}
 
         <div style={st.sectionLabel}>Session name (optional)</div>
         <input

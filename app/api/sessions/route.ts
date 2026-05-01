@@ -22,6 +22,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Account required to create a session" }, { status: 401 });
     }
 
+    if (account.tier === "FREE") {
+      return NextResponse.json({ error: "A paid plan is required to create sessions" }, { status: 403 });
+    }
+
     const body = await req.json();
     const { format, courts, pointsPerMatch, servesPerRotation, maxPlayers, scheduledAt, matchRules, name } = body;
 
