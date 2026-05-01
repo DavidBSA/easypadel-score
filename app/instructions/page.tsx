@@ -19,7 +19,7 @@ const sections = [
       },
       {
         heading: "Create Session",
-        body: "Multi-device. The organiser creates a session and shares a 4-letter code. Players join on their own phones by visiting the app and tapping Join Session.",
+        body: "Multi-device. The organiser creates a session and shares a 4-letter code. Players join on their own devices by visiting the app and tapping Join Session.",
       },
     ],
   },
@@ -83,19 +83,19 @@ const sections = [
     ],
   },
   {
-    title: "Beta testing notes",
+    title: "Apple Watch",
     items: [
       {
-        heading: "This is a beta",
-        body: "You may encounter bugs or rough edges. Please note what you were doing when anything goes wrong and share feedback directly.",
+        heading: "Apple Watch scoring",
+        body: "Account holders can score matches directly from their wrist. Two ways to get there:",
       },
       {
-        heading: "No accounts yet",
-        body: "There is currently no login or payment system. All features are fully available to test.",
+        heading: "Web Watch",
+        body: "Visit easypadelscore.com/watch/[code] from your Watch's browser. Available right now — no app needed.",
       },
       {
-        heading: "Multi-device testing",
-        body: "For the best test, use at least two devices — one as organiser and one or more as players. Real-time updates work over SSE so scores should update within a couple of seconds.",
+        heading: "Native Watch app",
+        body: "Download the EasyPadelScore iOS app. The Apple Watch companion installs automatically alongside it. Enter your session code on the Watch and score without touching your device.",
       },
     ],
   },
@@ -127,13 +127,8 @@ export default function InstructionsPage() {
         <div style={st.header}>
           <div>
             <div style={st.title}>How to use EPS</div>
-            <div style={st.sub}>Beta tester guide</div>
           </div>
           <button style={st.btn} onClick={() => router.push("/")}>← Home</button>
-        </div>
-
-        <div style={st.betaBanner}>
-          Beta version — all features are available to test. No login or payment required yet. Please share feedback directly.
         </div>
 
         {sections.map((section) => (

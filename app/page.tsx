@@ -58,7 +58,7 @@ function findResumeSessions(): ResumeSession[] {
 const USP_ITEMS = [
   { icon: "🎾", text: "Mixed, Team or Single format" },
   { icon: "📲", text: "Invite friends via link or QR code" },
-  { icon: "📱", text: "Every player scores from their own phone" },
+  { icon: "📱", text: "Every player scores from their own device" },
   { icon: "📊", text: "Live leaderboard updates in real time" },
   { icon: "⚡", text: "Auto match progression — courts assigned and queues managed automatically" },
 ];
@@ -381,7 +381,7 @@ export default function HomePage() {
         {/* ── Start Match ── */}
         <button style={st.btnPrimary} onClick={() => router.push("/match/setup")}>
           <div style={st.btnInner}>
-            <div style={st.btnTitle}>Start Match</div>
+            <div style={{ ...st.btnTitle, display: "inline-flex", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 999, padding: "4px 14px" }}>Start Match</div>
             <div style={st.btnSub}>One device · no sign-up needed</div>
           </div>
         </button>
@@ -401,7 +401,7 @@ export default function HomePage() {
           <div style={{ ...st.btnInner, gap: 0, padding: "18px 18px 16px" }}>
             {/* Header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <div style={{ ...st.btnTitle, fontSize: 19 }}>Create Session</div>
+              <div style={{ ...st.btnTitle, fontSize: 19, display: "inline-flex", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 999, padding: "4px 14px" }}>Create Session</div>
               <div style={{ fontSize: 11, fontWeight: 1000, background: "rgba(0,0,0,0.20)", borderRadius: 999, padding: "4px 10px", letterSpacing: 0.5 }}>
                 MULTI-DEVICE
               </div>
@@ -409,7 +409,7 @@ export default function HomePage() {
 
             {/* Tagline */}
             <div style={{ fontSize: 13, fontWeight: 900, opacity: 0.85, marginBottom: 14, lineHeight: 1.4 }}>
-              Run a full session from your phone — everyone plays, everyone scores.
+              Run a full session from your device — everyone plays, everyone scores.
             </div>
 
             {/* USP list */}
@@ -427,7 +427,7 @@ export default function HomePage() {
         {/* ── Join Session ── */}
         <button style={st.btnGhost} onClick={() => router.push("/join")}>
           <div style={st.btnInner}>
-            <div style={{ ...st.btnTitle, fontSize: 16 }}>
+            <div style={{ ...st.btnTitle, fontSize: 16, display: "inline-flex", alignItems: "center", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 999, padding: "4px 14px" }}>
               Join Session
               {hasLocalSession && <span style={st.sessionBadge}>Session on device</span>}
             </div>

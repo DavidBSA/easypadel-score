@@ -136,7 +136,7 @@ export default function PlayerPage() {
   const [submitError, setSubmitError] = useState("");
   const [submittedPointsA, setSubmittedPointsA] = useState<number | null>(null);
   const [submittedPointsB, setSubmittedPointsB] = useState<number | null>(null);
-  const [showWatchToast, setShowWatchToast] = useState(false);
+
 
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -733,19 +733,6 @@ export default function PlayerPage() {
     }
   }
 
-  const showWatchButton = !!selectedPlayer && session?.status === "ACTIVE";
-
-  async function handleOpenOnWatch() {
-    const watchUrl = `${window.location.origin}/watch/${code}?pid=${selectedPlayer!.id}`;
-    if (navigator.share) {
-      try { await navigator.share({ title: "EasyPadelScore Watch", url: watchUrl }); } catch {}
-    } else {
-      try { await navigator.clipboard.writeText(watchUrl); } catch {}
-      setShowWatchToast(true);
-      setTimeout(() => setShowWatchToast(false), 2000);
-    }
-  }
-
   return (
     <div style={st.page}><div style={st.card}>
       <div style={st.row}>
@@ -760,19 +747,6 @@ export default function PlayerPage() {
       {leaderboardPanel}
       <div style={st.divider} />
       {statusBlock}
-      {showWatchButton && (
-        <button
-          onClick={handleOpenOnWatch}
-          style={{ borderRadius: 14, padding: "12px 16px", fontSize: 14, fontWeight: 900, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: WHITE, display: "flex", alignItems: "center", gap: 8, marginTop: 12, width: "100%" }}
-        >
-          <span style={{ fontSize: 16 }}>⌚</span> Open on Watch
-        </button>
-      )}
-      {showWatchToast && (
-        <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.8)", color: WHITE, padding: "8px 16px", borderRadius: 20, fontSize: 13, zIndex: 9999, whiteSpace: "nowrap" }}>
-          Link copied!
-        </div>
-      )}
     </div></div>
   );
 }
