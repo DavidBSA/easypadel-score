@@ -20,6 +20,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const urlError = searchParams.get("error");
+  const next = searchParams.get("next");
 
   const [step, setStep] = useState<"email" | "otp">("email");
   const [email, setEmail] = useState("");
@@ -79,7 +80,7 @@ function LoginForm() {
         const data = await res.json();
         throw new Error(data.error || "Invalid or expired code");
       }
-      router.push("/account");
+      router.push(next || "/account");
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "Incorrect or expired code. Try again.");
       setStatus("error");
@@ -195,7 +196,7 @@ function LoginForm() {
               </span>
             </div>
 
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 16, width: "100%" }}>
               {digits.map((d, idx) => (
                 <input
                   key={idx}
@@ -207,7 +208,7 @@ function LoginForm() {
                   onChange={(e) => handleDigitChange(idx, e.target.value)}
                   onKeyDown={(e) => handleDigitKeyDown(idx, e)}
                   onPaste={idx === 0 ? handlePaste : undefined}
-                  style={{ width: 40, height: 48, textAlign: "center", fontSize: 22, fontWeight: 900, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 10, outline: "none" }}
+                  style={{ flex: "1 1 0", minWidth: 0, maxWidth: 48, height: 48, textAlign: "center", fontSize: 22, fontWeight: 900, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 10, outline: "none" }}
                 />
               ))}
             </div>
