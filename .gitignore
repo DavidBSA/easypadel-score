@@ -44,3 +44,8 @@ next-env.d.ts
 
 # brainstorming sessions
 .superpowers/
+
+# planning docs and step prompts (root-level only)
+/step*.md
+/new-chat-prompt.md
+/docs/
