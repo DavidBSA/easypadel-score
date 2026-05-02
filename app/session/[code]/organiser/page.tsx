@@ -176,6 +176,13 @@ export default function OrganiserPage() {
   const scoreSubmittedRef = useRef(false);
   const [showSettings, setShowSettings] = useState(false);
   const [editSets, setEditSets] = useState(1);
+
+  const [showSessionSettings, setShowSessionSettings] = useState(false);
+  const [sessionEditName, setSessionEditName] = useState("");
+  const [sessionEditCourts, setSessionEditCourts] = useState(1);
+  const [sessionEditPoints, setSessionEditPoints] = useState(16);
+  const [sessionSettingsSaving, setSessionSettingsSaving] = useState(false);
+  const [sessionSettingsError, setSessionSettingsError] = useState("");
   const [editDeuceMode, setEditDeuceMode] = useState<DeuceMode>("star");
   const [editTiebreak, setEditTiebreak] = useState(true);
   const [editSuperTiebreak, setEditSuperTiebreak] = useState(true);
@@ -264,6 +271,25 @@ export default function OrganiserPage() {
     setOrgSubmitting(true);
     try { await fetch("/api/matches/" + match.id + "/score", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceId, pointsA: orgFinalSetsA, pointsB: orgFinalSetsB, isOrganiserOverride: true }) }); }
     finally { setOrgSubmitting(false); }
+  }
+
+  async function saveSessionSettings() {
+    setSessionSettingsSaving(true);
+    setSessionSettingsError("");
+    const organiserPin = localStorage.getItem("eps_pin_" + code);
+    try {
+      const r = await fetch(`/api/sessions/${code}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organiserPin, name: sessionEditName.trim() || null, courts: sessionEditCourts, pointsPerMatch: sessionEditPoints }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setSessionSettingsError(data.error ?? "Failed to save settings."); setSessionSettingsSaving(false); return; }
+      setShowSessionSettings(false);
+    } catch {
+      setSessionSettingsError("Network error.");
+    }
+    setSessionSettingsSaving(false);
   }
 
   async function addPlayerManually() {
@@ -470,7 +496,7 @@ export default function OrganiserPage() {
 
     return (
       <div style={st.page}><div style={st.card}>
-        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div><button style={st.btn} onClick={() => router.push("/")}>Home</button></div>
+        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div><div style={{ display: "flex", gap: 8, alignItems: "center" }}><button style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setSessionEditName(session.name || ""); setSessionEditCourts(session.courts); setSessionEditPoints(session.pointsPerMatch); setShowSessionSettings(true); }}>⚙️</button><button style={st.btn} onClick={() => router.push("/")}>Home</button></div></div>
         <div style={st.pillsRow}>{pill(session.players.length + " joined", "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}{isSingle ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)") : pill(minPlayers + " needed to start", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}</div>
         {shareCard}
         {isSingle && <div style={{ marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.5 }}>Players can join using the session code above, or you can add them manually below.</div>}
@@ -529,6 +555,30 @@ export default function OrganiserPage() {
           <button style={{ ...st.btnGreen, opacity: canStart && !startLoading ? 1 : 0.4 }} onClick={lockAndStart} disabled={!canStart || startLoading}>{startLoading ? "Starting..." : "Lock & Start"}</button>
         </div>
         {startError && <div style={st.errorBox}>{startError}</div>}
+        {showSessionSettings && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: NAVY, borderRadius: 20, padding: 24, width: "90%", maxWidth: 400, border: "1px solid rgba(255,255,255,0.1)" }}>
+              <div style={{ fontSize: 18, fontWeight: 1000, color: WHITE, marginBottom: 20 }}>Edit Session Settings</div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.55, marginBottom: 6 }}>Session Name</div>
+                <input value={sessionEditName} onChange={(e) => setSessionEditName(e.target.value)} placeholder="Optional" style={{ width: "100%", background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none", boxSizing: "border-box" as const }} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.55, marginBottom: 6 }}>Courts</div>
+                <input type="number" min={1} max={10} value={sessionEditCourts} onChange={(e) => setSessionEditCourts(Number(e.target.value))} style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none" }} />
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.55, marginBottom: 6 }}>Points Per Game</div>
+                <input type="number" min={1} max={99} value={sessionEditPoints} onChange={(e) => setSessionEditPoints(Number(e.target.value))} style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none" }} />
+              </div>
+              {sessionSettingsError && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{sessionSettingsError}</div>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setShowSessionSettings(false)} style={{ borderRadius: 12, padding: "12px 18px", fontSize: 14, fontWeight: 900, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE }}>Cancel</button>
+                <button onClick={saveSessionSettings} disabled={sessionSettingsSaving} style={{ borderRadius: 12, padding: "12px 18px", fontSize: 14, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, opacity: sessionSettingsSaving ? 0.6 : 1 }}>Save Changes</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div></div>
     );
   }

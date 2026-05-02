@@ -9,6 +9,7 @@ const WHITE = "#FFFFFF";
 const ORANGE = "#FF6B00";
 const WARM_WHITE = "#F5F5F5";
 const GREEN = "#00C851";
+const RED = "#FF4040";
 
 const STORAGE_SESSION_KEY = "eps_session_active";
 
@@ -69,6 +70,9 @@ export default function HomePage() {
   const [resumeSessions, setResumeSessions] = useState<ResumeSession[]>([]);
   const [account, setAccount] = useState<AccountInfo>(undefined as unknown as AccountInfo);
   const [accountLoaded, setAccountLoaded] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     const s = safeParseJSON<AmericanoSession | null>(
@@ -88,6 +92,30 @@ export default function HomePage() {
     localStorage.removeItem(`eps_player_${code}`);
     localStorage.removeItem(`eps_pin_${code}`);
     setResumeSessions((prev) => prev.filter((s) => s.code !== code));
+  }
+
+  async function deleteSession(code: string) {
+    setDeleting(true);
+    setDeleteError("");
+    const organiserPin = localStorage.getItem(`eps_pin_${code}`);
+    try {
+      const r = await fetch(`/api/sessions/${code}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organiserPin }),
+      });
+      if (!r.ok) {
+        const data = await r.json();
+        setDeleteError(data.error ?? "Could not delete session.");
+        setDeleting(false);
+        return;
+      }
+      clearResume(code);
+      setDeleteConfirm(null);
+    } catch {
+      setDeleteError("Network error.");
+    }
+    setDeleting(false);
   }
 
   function handleCreateSession() {
@@ -370,11 +398,31 @@ export default function HomePage() {
                 >
                   Rejoin →
                 </button>
-                <button style={st.resumeDismiss} onClick={() => clearResume(s.code)}>
-                  Dismiss
-                </button>
+                {s.isOrganiser ? (
+                  <button
+                    style={{ borderRadius: 10, padding: "10px 16px", fontSize: 13, fontWeight: 900, cursor: deleting ? "not-allowed" : "pointer", border: "1px solid rgba(255,64,64,0.4)", background: "rgba(255,64,64,0.1)", color: RED, opacity: deleting ? 0.5 : 1, whiteSpace: "nowrap" as const }}
+                    onClick={() => { setDeleteError(""); setDeleteConfirm(deleteConfirm === s.code ? null : s.code); }}
+                    disabled={deleting}
+                  >
+                    🗑 Delete
+                  </button>
+                ) : (
+                  <button style={st.resumeDismiss} onClick={() => clearResume(s.code)}>
+                    Dismiss
+                  </button>
+                )}
               </div>
             </div>
+          {deleteConfirm === s.code && (
+            <div style={{ background: "rgba(255,64,64,0.12)", border: "1px solid rgba(255,64,64,0.35)", borderRadius: 10, padding: "10px 14px", margin: "0 16px 12px", fontSize: 13, color: WHITE }}>
+              <div style={{ marginBottom: 10 }}>This will permanently delete the session. Are you sure?</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { setDeleteConfirm(null); setDeleteError(""); }} style={{ borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 900, cursor: "pointer", border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: WHITE }}>Cancel</button>
+                <button onClick={() => deleteSession(s.code)} disabled={deleting} style={{ borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: RED, color: WHITE }}>Yes, delete it</button>
+              </div>
+              {deleteError && <div style={{ color: RED, fontSize: 12, marginTop: 8 }}>{deleteError}</div>}
+            </div>
+          )}
           </div>
         ))}
 

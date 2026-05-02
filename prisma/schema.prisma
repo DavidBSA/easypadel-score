@@ -17,6 +17,7 @@ enum SessionStatus {
   LOBBY
   ACTIVE
   COMPLETE
+  CANCELLED
 }
 
 enum MatchStatus {
