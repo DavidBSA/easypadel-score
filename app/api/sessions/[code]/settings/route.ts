@@ -8,7 +8,7 @@ export async function PATCH(
   try {
     const { code } = await params;
     const body = await req.json();
-    const { organiserPin, name, courts, pointsPerMatch } = body;
+    const { organiserPin, name, courts, pointsPerMatch, courtNames } = body;
 
     const session = await prisma.session.findUnique({
       where: { code: code.toUpperCase() },
@@ -41,6 +41,7 @@ export async function PATCH(
     if (name !== undefined) updateData.name = name;
     if (courts !== undefined) updateData.courts = courts;
     if (pointsPerMatch !== undefined) updateData.pointsPerMatch = pointsPerMatch;
+    if (courtNames !== undefined) updateData.courtNames = courtNames;
 
     const updated = await prisma.$transaction(async (tx) => {
       return tx.session.update({

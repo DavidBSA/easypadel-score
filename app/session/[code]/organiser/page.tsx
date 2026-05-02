@@ -96,7 +96,7 @@ function getScoreDisplay(s: TSnap): { a: string; b: string } { if (s.isTiebreak)
 type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number; submittedAt: string };
 type Match = { id: string; queuePosition: number; courtNumber: number | null; status: "PENDING" | "IN_PROGRESS" | "COMPLETE"; teamAPlayer1: string; teamAPlayer2: string; teamBPlayer1: string; teamBPlayer2: string; pointsA: number | null; pointsB: number | null; scoreStatus: "PENDING" | "CONFIRMED" | "CONFLICT" | null; scoreSubmissions: ScoreSubmission[]; startedAt: string | null; completedAt: string | null; };
-type Session = { id: string; code: string; name?: string | null; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; players: Player[]; matches: Match[]; createdAt: string; scheduledAt: string | null; };
+type Session = { id: string; code: string; name?: string | null; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; courtNames?: (string | null)[] | null; players: Player[]; matches: Match[]; createdAt: string; scheduledAt: string | null; };
 type LeaderRow = { playerId: string; name: string; played: number; wins: number; draws: number; losses: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type CourtScore = { rawA: string };
 type OrgScoringMode = "final" | "live";
@@ -181,8 +181,11 @@ export default function OrganiserPage() {
   const [sessionEditName, setSessionEditName] = useState("");
   const [sessionEditCourts, setSessionEditCourts] = useState(1);
   const [sessionEditPoints, setSessionEditPoints] = useState(16);
+  const [sessionEditCourtNames, setSessionEditCourtNames] = useState<string[]>([]);
   const [sessionSettingsSaving, setSessionSettingsSaving] = useState(false);
   const [sessionSettingsError, setSessionSettingsError] = useState("");
+  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
+  const [removeLoading, setRemoveLoading] = useState(false);
   const [editDeuceMode, setEditDeuceMode] = useState<DeuceMode>("star");
   const [editTiebreak, setEditTiebreak] = useState(true);
   const [editSuperTiebreak, setEditSuperTiebreak] = useState(true);
@@ -277,11 +280,12 @@ export default function OrganiserPage() {
     setSessionSettingsSaving(true);
     setSessionSettingsError("");
     const organiserPin = localStorage.getItem("eps_pin_" + code);
+    const courtNamesPayload = sessionEditCourtNames.slice(0, sessionEditCourts).map((n) => n.trim() || null);
     try {
       const r = await fetch(`/api/sessions/${code}/settings`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organiserPin, name: sessionEditName.trim() || null, courts: sessionEditCourts, pointsPerMatch: sessionEditPoints }),
+        body: JSON.stringify({ organiserPin, name: sessionEditName.trim() || null, courts: sessionEditCourts, pointsPerMatch: sessionEditPoints, courtNames: courtNamesPayload }),
       });
       const data = await r.json();
       if (!r.ok) { setSessionSettingsError(data.error ?? "Failed to save settings."); setSessionSettingsSaving(false); return; }
@@ -290,6 +294,31 @@ export default function OrganiserPage() {
       setSessionSettingsError("Network error.");
     }
     setSessionSettingsSaving(false);
+  }
+
+  async function removePlayer(playerId: string) {
+    if (!deviceId) return;
+    setRemoveLoading(true);
+    try {
+      await fetch(`/api/sessions/${code}/players/${playerId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+    } catch {}
+    setRemoveLoading(false);
+    setRemoveConfirmId(null);
+  }
+
+  async function removePlayerPair(id1: string, id2: string) {
+    if (!deviceId) return;
+    setRemoveLoading(true);
+    try {
+      await fetch(`/api/sessions/${code}/players/${id1}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceId }) });
+      await fetch(`/api/sessions/${code}/players/${id2}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceId }) });
+    } catch {}
+    setRemoveLoading(false);
+    setRemoveConfirmId(null);
   }
 
   async function addPlayerManually() {
@@ -486,8 +515,8 @@ export default function OrganiserPage() {
 
   // ── LOBBY ──────────────────────────────────────────────────────────────────
   if (session.status === "LOBBY") {
-    const teamPairs: { p1: string; p2: string }[] = [];
-    if (isTeam) { for (let i = 0; i + 1 < session.players.length; i += 2) teamPairs.push({ p1: session.players[i].name, p2: session.players[i + 1].name }); }
+    const teamPairs: { p1: string; p2: string; id1: string; id2: string }[] = [];
+    if (isTeam) { for (let i = 0; i + 1 < session.players.length; i += 2) teamPairs.push({ p1: session.players[i].name, p2: session.players[i + 1].name, id1: session.players[i].id, id2: session.players[i + 1].id }); }
     const bothTeamsFull = singleAssignment.teamA.length === 2 && singleAssignment.teamB.length === 2;
     const startHint = isSingle ? "Assign 2 players to each team, then lock to start." : isTeam ? "Players are paired in join order. Locking entries generates the full match queue." : "Locking entries generates the full match queue.";
     const startLabel = canStart && !startLoading ? "Lock & Start" : startLoading ? "Starting..." : isSingle ? "Assign all 4 players to teams" : "Need " + (minPlayers - session.players.length) + " more player" + (minPlayers - session.players.length !== 1 ? "s" : "");
@@ -496,7 +525,7 @@ export default function OrganiserPage() {
 
     return (
       <div style={st.page}><div style={st.card}>
-        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div><div style={{ display: "flex", gap: 8, alignItems: "center" }}><button style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setSessionEditName(session.name || ""); setSessionEditCourts(session.courts); setSessionEditPoints(session.pointsPerMatch); setShowSessionSettings(true); }}>⚙️</button><button style={st.btn} onClick={() => router.push("/")}>Home</button></div></div>
+        <div style={st.row}><div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{fLabel} · {isSingle ? "1 court" : session.courts + " court" + (session.courts > 1 ? "s" : "")} · Waiting for players</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div><div style={{ display: "flex", gap: 8, alignItems: "center" }}><button style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setSessionEditName(session.name || ""); setSessionEditCourts(session.courts); setSessionEditPoints(session.pointsPerMatch); const existingNames = Array.isArray(session.courtNames) ? session.courtNames as (string | null)[] : []; setSessionEditCourtNames(Array.from({ length: session.courts }, (_, i) => existingNames[i] || "")); setShowSessionSettings(true); }}>⚙️</button><button style={st.btn} onClick={() => router.push("/session/" + code + "/player")}>Player view</button><button style={st.btn} onClick={() => router.push("/")}>Home</button></div></div>
         <div style={st.pillsRow}>{pill(session.players.length + " joined", "rgba(255,107,0,0.18)", "rgba(255,107,0,0.45)")}{isSingle ? pill("4 players needed", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)") : pill(minPlayers + " needed to start", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.2)")}</div>
         {shareCard}
         {isSingle && <div style={{ marginTop: 12, borderRadius: 12, padding: "10px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.5 }}>Players can join using the session code above, or you can add them manually below.</div>}
@@ -509,7 +538,7 @@ export default function OrganiserPage() {
             {addError && <div style={st.errorBox}>{addError}</div>}
             {session.players.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8, marginTop: 10 }}>
-                {session.players.map((p) => { const inA = singleAssignment.teamA.includes(p.id); const inB = singleAssignment.teamB.includes(p.id); const full = bothTeamsFull && !inA && !inB; return <div key={p.id} style={singlePlayerChipStyle(inA, inB, full)} onClick={() => !full && toggleSingleAssign(p.id)}><span>{p.name}</span>{inA && <span style={{ fontSize: 11, fontWeight: 1000, color: ORANGE, opacity: 0.9 }}>Team A</span>}{inB && <span style={{ fontSize: 11, fontWeight: 1000, color: WARM_WHITE, opacity: 0.7 }}>Team B</span>}</div>; })}
+                {session.players.map((p) => { const inA = singleAssignment.teamA.includes(p.id); const inB = singleAssignment.teamB.includes(p.id); const full = bothTeamsFull && !inA && !inB; const isConfirming = removeConfirmId === p.id; return <div key={p.id} style={singlePlayerChipStyle(inA, inB, full)} onClick={() => { setRemoveConfirmId(null); if (!full) toggleSingleAssign(p.id); }}><span>{p.name}</span>{inA && <span style={{ fontSize: 11, fontWeight: 1000, color: ORANGE, opacity: 0.9 }}>Team A</span>}{inB && <span style={{ fontSize: 11, fontWeight: 1000, color: WARM_WHITE, opacity: 0.7 }}>Team B</span>}{isConfirming ? <span onClick={(e) => { e.stopPropagation(); removePlayer(p.id); }} style={{ marginLeft: "auto", fontSize: 11, fontWeight: 1000, color: RED, cursor: removeLoading ? "default" : "pointer" }}>Remove?</span> : <span onClick={(e) => { e.stopPropagation(); setRemoveConfirmId(p.id); }} style={{ marginLeft: "auto", opacity: 0.35, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</span>}</div>; })}
               </div>
             ) : <div style={{ ...st.hint, marginTop: 8 }}>No players yet — add names above or share the code.</div>}
             <div style={st.divider} />
@@ -528,10 +557,10 @@ export default function OrganiserPage() {
               {session.players.length === 0 ? <div style={st.hint}>No players yet — share the code above.</div>
                 : isTeam && teamPairs.length > 0 ? (
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0,1fr))" }}>
-                    {teamPairs.map((tp, i) => <div key={i} style={st.teamPairCard}><div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>T{i + 1}</div><div style={{ fontSize: 13, fontWeight: 900 }}>{tp.p1} &amp; {tp.p2}</div></div>)}
-                    {session.players.length % 2 !== 0 && <div style={{ ...st.teamPairCard, opacity: 0.5 }}><div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>...</div><div style={{ fontSize: 13, fontWeight: 900 }}>{session.players[session.players.length - 1].name} — waiting for partner</div></div>}
+                    {teamPairs.map((tp, i) => { const isConfirming = removeConfirmId === tp.id1; return <div key={i} style={{ ...st.teamPairCard, background: isConfirming ? "rgba(255,64,64,0.10)" : undefined, borderColor: isConfirming ? "rgba(255,64,64,0.35)" : undefined }}><div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>T{i + 1}</div><div style={{ fontSize: 13, fontWeight: 900, flex: 1 }}>{tp.p1} &amp; {tp.p2}</div>{isConfirming ? <span onClick={() => removePlayerPair(tp.id1, tp.id2)} style={{ fontSize: 11, fontWeight: 1000, color: RED, cursor: removeLoading ? "default" : "pointer", whiteSpace: "nowrap" }}>Remove?</span> : <span onClick={() => setRemoveConfirmId(tp.id1)} style={{ opacity: 0.35, cursor: "pointer", fontSize: 13 }}>✕</span>}</div>; })}
+                    {session.players.length % 2 !== 0 && (() => { const lastP = session.players[session.players.length - 1]; const isConfirming = removeConfirmId === lastP.id; return <div style={{ ...st.teamPairCard, opacity: isConfirming ? 1 : 0.5, background: isConfirming ? "rgba(255,64,64,0.10)" : undefined, borderColor: isConfirming ? "rgba(255,64,64,0.35)" : undefined }}><div style={{ fontSize: 12, fontWeight: 1000, color: ORANGE, minWidth: 24 }}>...</div><div style={{ fontSize: 13, fontWeight: 900, flex: 1 }}>{lastP.name} — waiting for partner</div>{isConfirming ? <span onClick={() => removePlayer(lastP.id)} style={{ fontSize: 11, fontWeight: 1000, color: RED, cursor: removeLoading ? "default" : "pointer", whiteSpace: "nowrap" }}>Remove?</span> : <span onClick={() => setRemoveConfirmId(lastP.id)} style={{ opacity: 0.35, cursor: "pointer", fontSize: 13 }}>✕</span>}</div>; })()}
                   </div>
-                ) : <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>{session.players.map((p) => <div key={p.id} style={st.playerPill}>{p.name}</div>)}</div>}
+                ) : <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 8 }}>{session.players.map((p) => { const isConfirming = removeConfirmId === p.id; return <div key={p.id} style={{ borderRadius: 12, padding: "8px 14px", background: isConfirming ? "rgba(255,64,64,0.12)" : "rgba(255,255,255,0.06)", border: "1px solid " + (isConfirming ? "rgba(255,64,64,0.40)" : "rgba(255,255,255,0.10)"), fontSize: 14, fontWeight: 900, color: WHITE, display: "flex", alignItems: "center", gap: 8 }}><span>{p.name}</span>{isConfirming ? <span onClick={() => removePlayer(p.id)} style={{ fontSize: 11, fontWeight: 1000, color: RED, cursor: removeLoading ? "default" : "pointer" }}>Remove?</span> : <span onClick={() => setRemoveConfirmId(p.id)} style={{ opacity: 0.35, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</span>}</div>; })}</div>}
             </div>
             <div style={st.sectionLabel}>Add {isTeam ? "team" : "player"} manually</div>
             {contacts.length > 0 && <div style={{ ...st.hint, marginBottom: 10 }}>Start typing to pick from your player library.</div>}
@@ -565,8 +594,26 @@ export default function OrganiserPage() {
               </div>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.55, marginBottom: 6 }}>Courts</div>
-                <input type="number" min={1} max={10} value={sessionEditCourts} onChange={(e) => setSessionEditCourts(Number(e.target.value))} style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none" }} />
+                <input type="number" min={1} max={10} value={sessionEditCourts} onChange={(e) => { const n = Number(e.target.value); setSessionEditCourts(n); setSessionEditCourtNames((prev) => Array.from({ length: n }, (_, i) => prev[i] ?? "")); }} style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none" }} />
               </div>
+              {!isSingle && sessionEditCourts > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.55, marginBottom: 8 }}>Court Names <span style={{ fontWeight: 500, opacity: 0.7 }}>(optional)</span></div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {Array.from({ length: sessionEditCourts }, (_, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.4, minWidth: 16, textAlign: "right" as const }}>{i + 1}</span>
+                        <input
+                          value={sessionEditCourtNames[i] ?? ""}
+                          onChange={(e) => { const next = [...sessionEditCourtNames]; next[i] = e.target.value; setSessionEditCourtNames(next); }}
+                          placeholder={"Court " + (i + 1)}
+                          style={{ flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none", boxSizing: "border-box" as const }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.55, marginBottom: 6 }}>Points Per Game</div>
                 <input type="number" min={1} max={99} value={sessionEditPoints} onChange={(e) => setSessionEditPoints(Number(e.target.value))} style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none" }} />
@@ -590,6 +637,7 @@ export default function OrganiserPage() {
   const complete = session.matches.filter((m) => m.status === "COMPLETE");
   const courtNumbers = Array.from({ length: session.courts }, (_, i) => i + 1);
   const subtitleParts = [fLabel, session.players.length + " players", session.courts + " court" + (session.courts > 1 ? "s" : ""), ppm + " pts"];
+  function courtLabel(cn: number): string { const names = Array.isArray(session!.courtNames) ? session!.courtNames as (string | null)[] : []; return names[cn - 1] || "Court " + cn; }
 
   // ── SINGLE ACTIVE ──────────────────────────────────────────────────────────
   if (isSingle) {
@@ -646,6 +694,7 @@ export default function OrganiserPage() {
                 {orgScoringMode === "live" && <div style={tennisChip(false)} onClick={tennisRandomServer}>Random server</div>}
                 <div style={tennisChip(showSettings)} onClick={() => showSettings ? setShowSettings(false) : openSettings()}>⚙ Settings {showSettings ? "▲" : "▼"}</div>
               </div>
+              <button style={st.btn} onClick={() => router.push("/session/" + code + "/player")}>Player view</button>
               <button style={st.btn} onClick={() => router.push("/")}>Home</button>
             </div>
           </div>
@@ -863,6 +912,7 @@ export default function OrganiserPage() {
         <div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{subtitleParts.join(" · ")}</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           {session.status === "ACTIVE" && <button style={{ ...st.btnRed, opacity: inProgress.length > 0 ? 0.35 : 1 }} onClick={() => { if (inProgress.length === 0) { setEndConfirm(true); setEndError(""); } }} disabled={inProgress.length > 0}>End session</button>}
+          <button style={st.btn} onClick={() => router.push("/session/" + code + "/player")}>Player view</button>
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>
         </div>
       </div>
@@ -878,15 +928,15 @@ export default function OrganiserPage() {
       <div style={{ display: "grid", gap: 10, gridTemplateColumns: courtGridCols }}>
         {courtNumbers.map((cn) => {
           const m = inProgress.find((x) => x.courtNumber === cn);
-          if (!m) return <div key={cn} style={{ ...st.courtCard, opacity: 0.45 }}><div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>Court {cn}</div><div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Open — no active match</div></div>;
+          if (!m) return <div key={cn} style={{ ...st.courtCard, opacity: 0.45 }}><div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>{courtLabel(cn)}</div><div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Open — no active match</div></div>;
           const { a1, a2, b1, b2 } = names(m); const hasScore = m.pointsA !== null && m.pointsB !== null;
           const rawA = getEntryA(m.id); const rawB = getEntryB(m.id); const valid = isValidEntry(m.id);
           const entryANum = parseInt(rawA, 10); const entryBNum = parseInt(rawB, 10);
-          if (hasScore) { const dA = m.pointsA!; const dB = m.pointsB!; return <div key={cn} style={{ ...st.courtCard, borderColor: "rgba(0,200,80,0.3)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>Court {cn}</div><span style={{ fontSize: 11, fontWeight: 1000, color: GREEN }}>Done</span></div><div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 6, alignItems: "center" }}><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px" }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team A</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{a1} &amp; {a2}</div><div style={{ fontSize: 26, fontWeight: 1150, color: dA > dB ? GREEN : dA < dB ? RED : WHITE }}>{dA}</div></div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.4, textAlign: "center" as const }}>vs</div><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px", textAlign: "right" as const }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team B</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{b1} &amp; {b2}</div><div style={{ fontSize: 26, fontWeight: 1150, color: dB > dA ? GREEN : dB < dA ? RED : WHITE }}>{dB}</div></div></div></div>; }
-          return <div key={cn} style={{ ...st.courtCard, borderColor: "rgba(255,107,0,0.2)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>Court {cn}</div><span style={{ fontSize: 11, fontWeight: 1000, color: WARM_WHITE, opacity: 0.6 }}>In play</span></div><div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 6, alignItems: "center", marginBottom: 8 }}><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px" }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 2 }}>Team A</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{a1} &amp; {a2}</div><input inputMode="numeric" placeholder="—" value={rawA} onChange={(e) => { const val = e.target.value.replace(/[^\d]/g, ""); const n = parseInt(val, 10); if (val === "" || (!isNaN(n) && n <= ppm)) setCourtScores((prev) => ({ ...prev, [m.id]: { rawA: val } })); }} style={{ width: "100%", background: rawA !== "" ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid " + (rawA !== "" ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.14)"), borderRadius: 8, padding: "8px 6px", fontSize: 26, fontWeight: 1150, textAlign: "center" as const, outline: "none", boxSizing: "border-box" as const }} /></div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.4, textAlign: "center" as const }}>vs</div><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px", textAlign: "right" as const }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 2 }}>Team B</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{b1} &amp; {b2}</div><div style={{ width: "100%", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "8px 6px", fontSize: 26, fontWeight: 1150, textAlign: "center" as const, border: "1px solid rgba(255,255,255,0.08)", color: rawB !== "" ? WHITE : "rgba(255,255,255,0.2)", boxSizing: "border-box" as const }}>{rawB !== "" ? rawB : "—"}</div></div></div><div style={{ fontSize: 11, opacity: 0.4, textAlign: "center" as const, marginBottom: 8 }}>{valid ? "Tap submit to confirm" : "Enter Team A score — Team B auto-calculates"}</div><button style={{ width: "100%", borderRadius: 10, padding: "12px 10px", fontSize: 13, fontWeight: 1000, cursor: valid ? "pointer" : "default", border: "none", background: valid ? ORANGE : "rgba(255,255,255,0.08)", color: valid ? WHITE : "rgba(255,255,255,0.3)" }} onClick={() => submitCourtScore(m.id, ppm)} disabled={!valid || submitLoading === m.id}>{submitLoading === m.id ? "Submitting..." : valid ? "Submit " + entryANum + " - " + entryBNum : "Enter score above"}</button></div>;
+          if (hasScore) { const dA = m.pointsA!; const dB = m.pointsB!; return <div key={cn} style={{ ...st.courtCard, borderColor: "rgba(0,200,80,0.3)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>{courtLabel(cn)}</div><span style={{ fontSize: 11, fontWeight: 1000, color: GREEN }}>Done</span></div><div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 6, alignItems: "center" }}><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px" }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team A</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{a1} &amp; {a2}</div><div style={{ fontSize: 26, fontWeight: 1150, color: dA > dB ? GREEN : dA < dB ? RED : WHITE }}>{dA}</div></div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.4, textAlign: "center" as const }}>vs</div><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px", textAlign: "right" as const }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 3 }}>Team B</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{b1} &amp; {b2}</div><div style={{ fontSize: 26, fontWeight: 1150, color: dB > dA ? GREEN : dB < dA ? RED : WHITE }}>{dB}</div></div></div></div>; }
+          return <div key={cn} style={{ ...st.courtCard, borderColor: "rgba(255,107,0,0.2)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><div style={{ fontWeight: 1000, fontSize: 14, color: ORANGE }}>{courtLabel(cn)}</div><span style={{ fontSize: 11, fontWeight: 1000, color: WARM_WHITE, opacity: 0.6 }}>In play</span></div><div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 6, alignItems: "center", marginBottom: 8 }}><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px" }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 2 }}>Team A</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{a1} &amp; {a2}</div><input inputMode="numeric" placeholder="—" value={rawA} onChange={(e) => { const val = e.target.value.replace(/[^\d]/g, ""); const n = parseInt(val, 10); if (val === "" || (!isNaN(n) && n <= ppm)) setCourtScores((prev) => ({ ...prev, [m.id]: { rawA: val } })); }} style={{ width: "100%", background: rawA !== "" ? "rgba(255,107,0,0.10)" : "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid " + (rawA !== "" ? "rgba(255,107,0,0.45)" : "rgba(255,255,255,0.14)"), borderRadius: 8, padding: "8px 6px", fontSize: 26, fontWeight: 1150, textAlign: "center" as const, outline: "none", boxSizing: "border-box" as const }} /></div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.4, textAlign: "center" as const }}>vs</div><div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "8px 10px", textAlign: "right" as const }}><div style={{ fontSize: 10, opacity: 0.5, fontWeight: 900, marginBottom: 2 }}>Team B</div><div style={{ fontSize: 11, fontWeight: 900, opacity: 0.85, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{b1} &amp; {b2}</div><div style={{ width: "100%", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "8px 6px", fontSize: 26, fontWeight: 1150, textAlign: "center" as const, border: "1px solid rgba(255,255,255,0.08)", color: rawB !== "" ? WHITE : "rgba(255,255,255,0.2)", boxSizing: "border-box" as const }}>{rawB !== "" ? rawB : "—"}</div></div></div><div style={{ fontSize: 11, opacity: 0.4, textAlign: "center" as const, marginBottom: 8 }}>{valid ? "Tap submit to confirm" : "Enter Team A score — Team B auto-calculates"}</div><button style={{ width: "100%", borderRadius: 10, padding: "12px 10px", fontSize: 13, fontWeight: 1000, cursor: valid ? "pointer" : "default", border: "none", background: valid ? ORANGE : "rgba(255,255,255,0.08)", color: valid ? WHITE : "rgba(255,255,255,0.3)" }} onClick={() => submitCourtScore(m.id, ppm)} disabled={!valid || submitLoading === m.id}>{submitLoading === m.id ? "Submitting..." : valid ? "Submit " + entryANum + " - " + entryBNum : "Enter score above"}</button></div>;
         })}
       </div>
-      {pending.length > 0 && (<><div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>{pending.map((m) => { const { a1, a2, b1, b2 } = names(m); return <div key={m.id} style={st.queueCard}><div style={st.names}>{a1} &amp; {a2} <span style={{ opacity: 0.4 }}>vs</span> {b1} &amp; {b2}</div><div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" as const }}>{courtNumbers.map((cn) => { const busy = inProgress.some((x) => x.courtNumber === cn); return <button key={cn} style={{ ...st.btn, opacity: busy ? 0.3 : 1 }} onClick={() => { if (!busy) startMatch(m.id, cn); }} disabled={busy}>Court {cn}</button>; })}</div></div>; })}</>)}
+      {pending.length > 0 && (<><div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>{pending.map((m) => { const { a1, a2, b1, b2 } = names(m); return <div key={m.id} style={st.queueCard}><div style={st.names}>{a1} &amp; {a2} <span style={{ opacity: 0.4 }}>vs</span> {b1} &amp; {b2}</div><div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" as const }}>{courtNumbers.map((cn) => { const busy = inProgress.some((x) => x.courtNumber === cn); return <button key={cn} style={{ ...st.btn, opacity: busy ? 0.3 : 1 }} onClick={() => { if (!busy) startMatch(m.id, cn); }} disabled={busy}>{courtLabel(cn)}</button>; })}</div></div>; })}</>)}
       {endConfirm && <div style={st.endConfirmBox}><div style={{ fontWeight: 1000, fontSize: 14 }}>End session now?</div><div style={{ fontSize: 13, opacity: 0.7, lineHeight: 1.5 }}>This will finalise the leaderboard based on completed matches and push results to all players. Remaining queued matches will be cancelled. This cannot be undone.</div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}><button style={{ ...st.btnRed, opacity: endLoading ? 0.5 : 1 }} onClick={endSession} disabled={endLoading}>{endLoading ? "Ending..." : "Yes, end session"}</button><button style={st.btn} onClick={() => { setEndConfirm(false); setEndError(""); }}>Cancel</button></div>{endError && <div style={{ fontSize: 13, color: RED, fontWeight: 900 }}>{endError}</div>}</div>}
       {pending.length === 0 && inProgress.length === 0 && complete.length > 0 && !endConfirm && <div style={{ marginTop: 8, borderRadius: 18, padding: 24, background: "rgba(255,107,0,0.08)", border: "1px solid rgba(255,107,0,0.30)", textAlign: "center" as const }}><div style={{ fontSize: 48, marginBottom: 8 }}>🏆</div><div style={{ fontSize: 22, fontWeight: 1100, color: ORANGE }}>Session Complete!</div><div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 6 }}>All {complete.length} matches finished</div><button style={{ marginTop: 16, borderRadius: 14, padding: "13px 24px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE }} onClick={() => router.push("/session/" + code + "/organiser/results")}>View Full Results</button></div>}
       <div style={st.divider} />

@@ -45,6 +45,7 @@ model Session {
   maxPlayers         Int?
   scheduledAt        DateTime?
   matchRules         Json?
+  courtNames         Json?
   ownerAccountId     String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
