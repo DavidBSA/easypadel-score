@@ -101,6 +101,7 @@ export default function PlayerPage() {
 
   const [isMobile, setIsMobile] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [isOrganiser, setIsOrganiser] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
@@ -145,7 +146,7 @@ export default function PlayerPage() {
 
   useEffect(() => {
     if (!code) return;
-    try { const stored = localStorage.getItem("eps_join_" + code); if (stored) { const { deviceId: did } = JSON.parse(stored); if (did) setDeviceId(did); } } catch { }
+    try { const stored = localStorage.getItem("eps_join_" + code); if (stored) { const { deviceId: did, isOrganiser: iso } = JSON.parse(stored); if (did) setDeviceId(did); if (iso) setIsOrganiser(true); } } catch { }
     try { const ps = localStorage.getItem("eps_player_" + code); if (ps) setSelectedPlayer(JSON.parse(ps)); } catch { }
     try { const rules = localStorage.getItem("eps_match_rules_" + code); if (rules) setTennisPayload(JSON.parse(rules)); } catch { }
     setBootstrapped(true);
@@ -363,7 +364,10 @@ export default function PlayerPage() {
   if (!selectedPlayer) {
     return (
       <div style={st.page}><div style={st.card}>
-        <button style={{ ...st.btn, marginBottom: 14 }} onClick={() => router.push("/")}>Home</button>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          {isOrganiser && <button style={st.btn} onClick={() => router.push("/session/" + code + "/organiser")}>Organiser view</button>}
+          <button style={st.btn} onClick={() => router.push("/")}>Home</button>
+        </div>
         <div style={st.title}>Who are you?</div>
         <div style={{ ...st.sub, marginBottom: 4 }}>Tap your name to claim your spot.{" "}<span style={{ color: ORANGE, cursor: "pointer", fontWeight: 1000 }} onClick={() => router.push("/join?code=" + code)}>Join with the session code</span>{" "}if you have not joined yet.</div>
         {!session ? <div style={{ opacity: 0.6, marginTop: 14, fontWeight: 900 }}>Loading player list...</div> : (
@@ -741,6 +745,7 @@ export default function PlayerPage() {
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             <button style={showLeaderboard ? st.btnActive : st.btn} onClick={() => setShowLeaderboard((v) => !v)}>🏅</button>
             <button style={st.btn} onClick={changeName}>Change</button>
+            {isOrganiser && <button style={st.btn} onClick={() => router.push("/session/" + code + "/organiser")}>Organiser view</button>}
           </div>
         )}
       </div>
