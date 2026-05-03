@@ -95,7 +95,7 @@ function getScoreDisplay(s: TSnap): { a: string; b: string } { if (s.isTiebreak)
 
 type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number; submittedAt: string };
-type Match = { id: string; queuePosition: number; courtNumber: number | null; status: "PENDING" | "IN_PROGRESS" | "COMPLETE"; teamAPlayer1: string; teamAPlayer2: string; teamBPlayer1: string; teamBPlayer2: string; pointsA: number | null; pointsB: number | null; scoreStatus: "PENDING" | "CONFIRMED" | "CONFLICT" | null; scoreSubmissions: ScoreSubmission[]; startedAt: string | null; completedAt: string | null; };
+type Match = { id: string; queuePosition: number; courtNumber: number | null; status: "PENDING" | "IN_PROGRESS" | "COMPLETE" | "CANCELLED"; teamAPlayer1: string; teamAPlayer2: string; teamBPlayer1: string; teamBPlayer2: string; pointsA: number | null; pointsB: number | null; scoreStatus: "PENDING" | "CONFIRMED" | "CONFLICT" | null; scoreSubmissions: ScoreSubmission[]; startedAt: string | null; completedAt: string | null; };
 type Session = { id: string; code: string; name?: string | null; format: "SINGLE" | "MIXED" | "TEAM"; status: "LOBBY" | "ACTIVE" | "COMPLETE"; courts: number; pointsPerMatch: number; servesPerRotation: number | null; maxPlayers: number | null; courtNames?: (string | null)[] | null; players: Player[]; matches: Match[]; createdAt: string; scheduledAt: string | null; };
 type LeaderRow = { playerId: string; name: string; played: number; wins: number; draws: number; losses: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type CourtScore = { rawA: string };
@@ -198,6 +198,11 @@ export default function OrganiserPage() {
   const [endConfirm, setEndConfirm] = useState(false);
   const [endLoading, setEndLoading] = useState(false);
   const [endError, setEndError] = useState("");
+  const [showLiveSettings, setShowLiveSettings] = useState(false);
+  const [liveEditPoints, setLiveEditPoints] = useState(16);
+  const [liveSettingsSaving, setLiveSettingsSaving] = useState(false);
+  const [liveSettingsError, setLiveSettingsError] = useState("");
+  const [liveSettingsSaved, setLiveSettingsSaved] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -365,8 +370,29 @@ export default function OrganiserPage() {
   }
 
   async function endSession() {
-    if (!deviceId) return; setEndLoading(true); setEndError("");
-    try { const r = await fetch("/api/sessions/" + code + "/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceId }) }); const data = await r.json(); if (!r.ok) { setEndError(data.error ?? "Could not end session."); setEndLoading(false); setEndConfirm(false); return; } } catch { setEndError("Network error."); } setEndLoading(false); setEndConfirm(false);
+    setEndLoading(true); setEndError("");
+    try {
+      const r = await fetch("/api/sessions/" + code + "/end", { method: "POST" });
+      const data = await r.json();
+      if (!r.ok) { setEndError(data.error ?? "Could not end session."); setEndLoading(false); return; }
+    } catch { setEndError("Network error."); }
+    setEndLoading(false); setEndConfirm(false);
+  }
+
+  async function saveLiveSettings() {
+    setLiveSettingsSaving(true); setLiveSettingsError(""); setLiveSettingsSaved(false);
+    try {
+      const r = await fetch("/api/sessions/" + code + "/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pointsPerMatch: liveEditPoints }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setLiveSettingsError(data.error ?? "Failed to save."); setLiveSettingsSaving(false); return; }
+      setLiveSettingsSaved(true);
+      setTimeout(() => setLiveSettingsSaved(false), 3000);
+    } catch { setLiveSettingsError("Network error."); }
+    setLiveSettingsSaving(false);
   }
 
   function tennisAddPoint(team: TTeam) { if (!tennisPayload) return; setTennisHistory((h) => [...h, tennisState]); setTennisState((prev) => addTennisPoint(prev, team, tennisPayload)); }
@@ -946,7 +972,8 @@ export default function OrganiserPage() {
       <div style={st.row}>
         <div><div style={st.title}>Organiser · {code}</div>{session.name && <div style={{ fontSize: 15, fontWeight: 900, color: WHITE, opacity: 0.85, marginTop: 2 }}>{session.name}</div>}<div style={st.sub}>{subtitleParts.join(" · ")}</div><div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.45, marginTop: 2 }}>{formatSessionDateTime(session.createdAt)}</div></div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          {session.status === "ACTIVE" && <button style={{ ...st.btnRed, opacity: inProgress.length > 0 ? 0.35 : 1 }} onClick={() => { if (inProgress.length === 0) { setEndConfirm(true); setEndError(""); } }} disabled={inProgress.length > 0}>End session</button>}
+          {session.status === "ACTIVE" && <button style={st.btnRed} onClick={() => { setEndConfirm(true); setEndError(""); }}>End session</button>}
+          {session.status === "ACTIVE" && !isSingle && <button style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 18, cursor: "pointer" }} onClick={() => { setLiveEditPoints(session.pointsPerMatch); setShowLiveSettings((v) => !v); }}>⚙️</button>}
           <button style={st.btn} onClick={() => router.push("/session/" + code + "/player")}>Player view</button>
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>
         </div>
@@ -957,6 +984,22 @@ export default function OrganiserPage() {
         {pill(complete.length + " done", "rgba(0,200,80,0.12)", "rgba(0,200,80,0.35)", complete.length > 0 ? () => router.push("/session/" + code + "/organiser/results") : undefined)}
       </div>
       {complete.length > 0 && <div style={{ ...st.hint, marginTop: 6 }}>Tap <strong style={{ color: GREEN }}>{complete.length} done</strong> to view and edit confirmed match scores.</div>}
+      {showLiveSettings && (
+        <div style={{ marginTop: 12, borderRadius: 16, padding: 16, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(255,255,255,0.12)" }}>
+          <div style={{ fontSize: 14, fontWeight: 1000, color: WHITE, marginBottom: 12 }}>Live Settings</div>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: WARM_WHITE, opacity: 0.55, marginBottom: 6 }}>Points per match</div>
+            <input type="number" min={8} max={32} step={4} value={liveEditPoints} onChange={(e) => setLiveEditPoints(Number(e.target.value))} style={{ width: 90, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "10px 14px", color: WHITE, fontSize: 14, outline: "none" }} />
+            <div style={{ fontSize: 11, color: WARM_WHITE, opacity: 0.5, marginTop: 6, lineHeight: 1.5 }}>Changes apply to unplayed matches only. Currently playing matches are unaffected.</div>
+          </div>
+          {liveSettingsError && <div style={{ color: RED, fontSize: 13, marginBottom: 8 }}>{liveSettingsError}</div>}
+          {liveSettingsSaved && <div style={{ color: GREEN, fontSize: 13, fontWeight: 900, marginBottom: 8 }}>Settings updated — all devices notified</div>}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowLiveSettings(false)} style={{ borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 900, cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.07)", color: WHITE }}>Cancel</button>
+            <button onClick={saveLiveSettings} disabled={liveSettingsSaving} style={{ borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE, opacity: liveSettingsSaving ? 0.6 : 1 }}>{liveSettingsSaving ? "Saving..." : "Save"}</button>
+          </div>
+        </div>
+      )}
       {serveReminderText && <div style={st.serveReminder}>{serveReminderText}</div>}
       {(() => {
         const now = Date.now();
@@ -1016,7 +1059,29 @@ export default function OrganiserPage() {
         })}
       </div>
       {pending.length > 0 && (<><div style={st.sectionLabel}>Queue — {pending.length} match{pending.length !== 1 ? "es" : ""} waiting</div>{pending.map((m) => { const { a1, a2, b1, b2 } = names(m); return <div key={m.id} style={st.queueCard}><div style={st.names}>{a1} &amp; {a2} <span style={{ opacity: 0.4 }}>vs</span> {b1} &amp; {b2}</div><div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" as const }}>{courtNumbers.map((cn) => { const busy = inProgress.some((x) => x.courtNumber === cn); return <button key={cn} style={{ ...st.btn, opacity: busy ? 0.3 : 1 }} onClick={() => { if (!busy) startMatch(m.id, cn); }} disabled={busy}>{courtLabel(cn)}</button>; })}</div></div>; })}</>)}
-      {endConfirm && <div style={st.endConfirmBox}><div style={{ fontWeight: 1000, fontSize: 14 }}>End session now?</div><div style={{ fontSize: 13, opacity: 0.7, lineHeight: 1.5 }}>This will finalise the leaderboard based on completed matches and push results to all players. Remaining queued matches will be cancelled. This cannot be undone.</div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}><button style={{ ...st.btnRed, opacity: endLoading ? 0.5 : 1 }} onClick={endSession} disabled={endLoading}>{endLoading ? "Ending..." : "Yes, end session"}</button><button style={st.btn} onClick={() => { setEndConfirm(false); setEndError(""); }}>Cancel</button></div>{endError && <div style={{ fontSize: 13, color: RED, fontWeight: 900 }}>{endError}</div>}</div>}
+      {endConfirm && (() => {
+        const unplayed = session.matches.filter(m => m.pointsA === null && m.pointsB === null && m.scoreSubmissions.length === 0);
+        const hasActiveScoring = inProgress.some(m => m.scoreSubmissions.length > 0);
+        let confirmMsg: React.ReactNode;
+        if (unplayed.length === 0) {
+          confirmMsg = <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.6 }}>All {complete.length} match{complete.length !== 1 ? "es" : ""} have been played. Final leaderboard is ready.</div>;
+        } else if (hasActiveScoring) {
+          confirmMsg = <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.6 }}>The current round is partially complete. {unplayed.length} unplayed match{unplayed.length !== 1 ? "es" : ""} will be excluded from the leaderboard.</div>;
+        } else {
+          confirmMsg = <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.75, lineHeight: 1.6 }}>{unplayed.length} match{unplayed.length !== 1 ? "es" : ""} haven&apos;t been played and won&apos;t count. Your leaderboard is based on {complete.length} completed match{complete.length !== 1 ? "es" : ""}.</div>;
+        }
+        return (
+          <div style={st.endConfirmBox}>
+            <div style={{ fontWeight: 1000, fontSize: 15 }}>End session?</div>
+            {confirmMsg}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+              <button style={{ borderRadius: 14, padding: "11px 18px", fontSize: 13, fontWeight: 1000, cursor: "pointer", border: "none", background: RED, color: WHITE, opacity: endLoading ? 0.5 : 1 }} onClick={endSession} disabled={endLoading}>{endLoading ? "Ending..." : "End Session"}</button>
+              <button style={st.btn} onClick={() => { setEndConfirm(false); setEndError(""); }}>Cancel</button>
+            </div>
+            {endError && <div style={{ fontSize: 13, color: RED, fontWeight: 900 }}>{endError}</div>}
+          </div>
+        );
+      })()}
       {pending.length === 0 && inProgress.length === 0 && complete.length > 0 && !endConfirm && <div style={{ marginTop: 8, borderRadius: 18, padding: 24, background: "rgba(255,107,0,0.08)", border: "1px solid rgba(255,107,0,0.30)", textAlign: "center" as const }}><div style={{ fontSize: 48, marginBottom: 8 }}>🏆</div><div style={{ fontSize: 22, fontWeight: 1100, color: ORANGE }}>Session Complete!</div><div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.6, marginTop: 6 }}>All {complete.length} matches finished</div><button style={{ marginTop: 16, borderRadius: 14, padding: "13px 24px", fontSize: 15, fontWeight: 1000, cursor: "pointer", border: "none", background: ORANGE, color: WHITE }} onClick={() => router.push("/session/" + code + "/organiser/results")}>View Full Results</button></div>}
       <div style={st.divider} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, marginBottom: 10 }}>

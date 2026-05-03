@@ -48,7 +48,7 @@ type Player = { id: string; name: string; isActive: boolean };
 type ScoreSubmission = { id: string; deviceId: string; pointsA: number; pointsB: number };
 type Match = {
   id: string; queuePosition: number; courtNumber: number | null;
-  status: "PENDING" | "IN_PROGRESS" | "COMPLETE";
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETE" | "CANCELLED";
   teamAPlayer1: string; teamAPlayer2: string; teamBPlayer1: string; teamBPlayer2: string;
   pointsA: number | null; pointsB: number | null;
   scoreStatus: "PENDING" | "CONFIRMED" | "CONFLICT" | null;

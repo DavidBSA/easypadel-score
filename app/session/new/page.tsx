@@ -122,7 +122,7 @@ export default function NewSessionPage() {
           format,
           courts: effectiveCourts,
           pointsPerMatch: isSingle ? 0 : pointsPerMatch,
-          servesPerRotation: isSingle ? null : 4,
+          servesPerRotation: isSingle ? null : 6,
           maxPlayers: isSingle ? 4 : slotMode === "fixed" ? Math.max(maxPlayersForAPI, minSlotsForAPI) : null,
           scheduledAt: scheduledDate && scheduledTime ? new Date(scheduledDate + "T" + scheduledTime).toISOString() : null,
           matchRules: isSingle ? { sets, rules: { deuceMode, tiebreak, superTiebreak: sets === 1 ? false : superTiebreak } } : undefined,

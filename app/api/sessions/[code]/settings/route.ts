@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../../../lib/prisma";
+import { getAccount } from "../../../../../lib/auth";
 
 export async function PATCH(
   req: NextRequest,
@@ -7,24 +8,23 @@ export async function PATCH(
 ) {
   try {
     const { code } = await params;
+    const account = await getAccount();
+    if (!account) return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+
     const body = await req.json();
-    const { organiserPin, name, courts, pointsPerMatch, courtNames } = body;
+    const { name, courts, pointsPerMatch, courtNames } = body;
 
     const session = await prisma.session.findUnique({
       where: { code: code.toUpperCase() },
     });
 
-    if (!session) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
+    if (!session) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    if (session.ownerAccountId !== account.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    if (organiserPin !== session.organiserPin) {
-      return NextResponse.json({ error: "Invalid PIN" }, { status: 403 });
-    }
-
-    if (session.status !== "LOBBY") {
+    // courts and courtNames can only be changed in LOBBY
+    if ((courts !== undefined || courtNames !== undefined) && session.status !== "LOBBY") {
       return NextResponse.json(
-        { error: "Session has already started — settings cannot be changed" },
+        { error: "Court settings can only be changed before the session starts" },
         { status: 400 }
       );
     }
@@ -33,8 +33,10 @@ export async function PATCH(
       return NextResponse.json({ error: "Courts must be at least 1" }, { status: 400 });
     }
 
-    if (pointsPerMatch !== undefined && pointsPerMatch < 1) {
-      return NextResponse.json({ error: "Points per match must be at least 1" }, { status: 400 });
+    if (pointsPerMatch !== undefined) {
+      if (typeof pointsPerMatch !== "number" || pointsPerMatch < 1) {
+        return NextResponse.json({ error: "Points per match must be at least 1" }, { status: 400 });
+      }
     }
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
