@@ -59,6 +59,8 @@ type Session = {
   courts: number; pointsPerMatch: number; servesPerRotation: number | null;
   players: Player[]; matches: Match[]; scheduledAt: string | null;
   matchRules?: TennisPayload | null;
+  courtNames?: (string | null)[] | null;
+  ownerAccountId?: string | null;
 };
 type LeaderRow = { playerId: string; name: string; played: number; pointsFor: number; pointsAgainst: number; diff: number; };
 type ScoringMode = "final" | "live";
@@ -102,6 +104,7 @@ export default function PlayerPage() {
   const [isMobile, setIsMobile] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [isOrganiser, setIsOrganiser] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
@@ -149,6 +152,14 @@ export default function PlayerPage() {
     try { const stored = localStorage.getItem("eps_join_" + code); if (stored) { const { deviceId: did, isOrganiser: iso } = JSON.parse(stored); if (did) setDeviceId(did); if (iso) setIsOrganiser(true); } } catch { }
     try { const ps = localStorage.getItem("eps_player_" + code); if (ps) setSelectedPlayer(JSON.parse(ps)); } catch { }
     try { const rules = localStorage.getItem("eps_match_rules_" + code); if (rules) setTennisPayload(JSON.parse(rules)); } catch { }
+    Promise.all([
+      fetch("/api/auth/me").then(r => r.ok ? r.json() : null),
+      fetch("/api/sessions/" + code).then(r => r.ok ? r.json() : null),
+    ]).then(([me, sess]) => {
+      if (me?.id && sess?.ownerAccountId && me.id === sess.ownerAccountId) {
+        setIsOwner(true);
+      }
+    });
     setBootstrapped(true);
   }, [code]);
 
@@ -365,7 +376,7 @@ export default function PlayerPage() {
     return (
       <div style={st.page}><div style={st.card}>
         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          {isOrganiser && <button style={st.btn} onClick={() => router.push("/session/" + code + "/organiser")}>Organiser view</button>}
+          {isOwner && <button style={st.btn} onClick={() => router.push("/session/" + code + "/organiser")}>Organiser view</button>}
           <button style={st.btn} onClick={() => router.push("/")}>Home</button>
         </div>
         <div style={st.title}>Who are you?</div>
@@ -446,17 +457,23 @@ export default function PlayerPage() {
     );
 
   } else if (!myMatch) {
+    const hasLiveMatches = session ? session.matches.some(m => m.status === "IN_PROGRESS") : false;
+    const isSittingOut = hasLiveMatches && upcomingMatches.length === 0;
     statusBlock = (
       <>
         <div style={statusBoxStyle(WARM_WHITE)}>
-          <div style={{ fontSize: 40, marginBottom: 10 }}>⏳</div>
-          <div style={{ fontWeight: 1000, fontSize: 20 }}>{isSingle ? "Match starting soon" : "Waiting for court assignment"}</div>
-          {session?.scheduledAt && (
+          <div style={{ fontSize: 40, marginBottom: 10 }}>{isSittingOut ? "🏝️" : "⏳"}</div>
+          <div style={{ fontWeight: 1000, fontSize: 20 }}>
+            {isSittingOut ? "Sitting this round out 🏝️" : (isSingle ? "Match starting soon" : "Waiting for court assignment")}
+          </div>
+          {!isSittingOut && session?.scheduledAt && (
             <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 10, background: "rgba(255,107,0,0.12)", border: "1px solid rgba(255,107,0,0.30)", fontSize: 14, fontWeight: 1000, color: "#FF6B00" }}>
               {formatLabel(session.format)} · {formatScheduled(session.scheduledAt)}
             </div>
           )}
-          <div style={{ opacity: 0.6, marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>{isSingle ? "You're in — the organiser will start the match shortly." : "Hang tight — you'll be assigned to a court shortly."}</div>
+          <div style={{ opacity: 0.6, marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>
+            {isSittingOut ? "Grab a drink — you're back on court next round." : (isSingle ? "You're in — the organiser will start the match shortly." : "Hang tight — you'll be assigned to a court shortly.")}
+          </div>
         </div>
         {upcomingBlock}
       </>
@@ -468,7 +485,7 @@ export default function PlayerPage() {
     if (upcomingMatches.length > 0) {
       statusBlock = (
         <>
-          <div style={statusBoxStyle(ORANGE)}><div style={{ fontSize: 40, marginBottom: 10 }}>⏳</div><div style={{ fontWeight: 1000, fontSize: 20 }}>Waiting for next court</div><div style={{ opacity: 0.6, marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>Your next match is queued — you'll be called to a court shortly.</div></div>
+          <div style={statusBoxStyle(ORANGE)}><div style={{ fontSize: 40, marginBottom: 10 }}>⏳</div><div style={{ fontWeight: 1000, fontSize: 20 }}>Waiting for next match</div><div style={{ opacity: 0.6, marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>You're scheduled for the next match — courts will be assigned shortly.</div></div>
           <div style={st.resultPill}><div style={{ fontSize: 13, fontWeight: 900, opacity: 0.7 }}>Last result</div><div style={{ display: "flex", alignItems: "baseline", gap: 8 }}><span style={{ fontSize: 22, fontWeight: 1200, color: myTeam === "A" ? ORANGE : WARM_WHITE }}>{pA}</span><span style={{ opacity: 0.35, fontSize: 16 }}>–</span><span style={{ fontSize: 22, fontWeight: 1200, color: myTeam === "B" ? ORANGE : WARM_WHITE }}>{pB}</span></div><div style={{ fontSize: 12, fontWeight: 1000, color: won ? GREEN : mine === theirs ? WARM_WHITE : RED }}>{won ? "Won" : mine === theirs ? "Draw" : "Lost"}</div></div>
           {upcomingBlock}
         </>
@@ -745,12 +762,45 @@ export default function PlayerPage() {
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             <button style={showLeaderboard ? st.btnActive : st.btn} onClick={() => setShowLeaderboard((v) => !v)}>🏅</button>
             <button style={st.btn} onClick={changeName}>Change</button>
-            {isOrganiser && <button style={st.btn} onClick={() => router.push("/session/" + code + "/organiser")}>Organiser view</button>}
+            {isOwner && <button style={st.btn} onClick={() => router.push("/session/" + code + "/organiser")}>Organiser view</button>}
           </div>
         )}
       </div>
       {leaderboardPanel}
       <div style={st.divider} />
+      {(() => {
+        if (!session) return null;
+        const liveMatcher = session.matches.filter(m => m.status === "IN_PROGRESS");
+        if (liveMatcher.length === 0) return null;
+        const courtNames = Array.isArray(session.courtNames) ? session.courtNames as (string | null)[] : [];
+        function courtLabel(cn: number | null): string { return cn ? (courtNames[cn - 1] || "Court " + cn) : "Court ?"; }
+        return (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 1000, letterSpacing: 2, color: WARM_WHITE, opacity: 0.5, textTransform: "uppercase" as const, marginBottom: 10 }}>Now Playing</div>
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 10 }}>
+              {liveMatcher.map(m => {
+                const a1 = nameById[m.teamAPlayer1] ?? "?";
+                const a2 = nameById[m.teamAPlayer2] ?? "?";
+                const b1 = nameById[m.teamBPlayer1] ?? "?";
+                const b2 = nameById[m.teamBPlayer2] ?? "?";
+                const myId = selectedPlayer?.id;
+                const teamAStyle: React.CSSProperties = { fontWeight: 900, fontSize: 13, color: (myId && (m.teamAPlayer1 === myId || m.teamAPlayer2 === myId)) ? ORANGE : WHITE };
+                const teamBStyle: React.CSSProperties = { fontWeight: 900, fontSize: 13, color: (myId && (m.teamBPlayer1 === myId || m.teamBPlayer2 === myId)) ? ORANGE : WHITE };
+                const hasScore = m.pointsA !== null && m.pointsB !== null;
+                return (
+                  <div key={m.id} style={{ flex: "1 1 140px", minWidth: 140, borderRadius: 14, padding: "12px 14px", background: NAVY, border: "1px solid rgba(255,255,255,0.08)", borderLeft: "3px solid " + GREEN }}>
+                    <div style={{ fontSize: 11, fontWeight: 1000, color: GREEN, opacity: 0.8, marginBottom: 6, letterSpacing: 0.5 }}>{courtLabel(m.courtNumber)}</div>
+                    <div style={teamAStyle}>{a1} &amp; {a2}</div>
+                    <div style={{ fontSize: 11, opacity: 0.4, margin: "3px 0" }}>vs</div>
+                    <div style={teamBStyle}>{b1} &amp; {b2}</div>
+                    {hasScore && <div style={{ marginTop: 6, fontSize: 16, fontWeight: 1100, color: WHITE }}>{m.pointsA} – {m.pointsB}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
       {statusBlock}
     </div></div>
   );

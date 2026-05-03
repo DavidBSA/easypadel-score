@@ -154,10 +154,16 @@ export default function OrganiserPage() {
   const [courtScores, setCourtScores] = useState<Record<string, CourtScore>>({});
   const [submitLoading, setSubmitLoading] = useState<string | null>(null);
 
-  // ── PIN recovery ───────────────────────────────────────────────────────────
-  const [pinInput, setPinInput] = useState("");
-  const [pinLoading, setPinLoading] = useState(false);
-  const [pinError, setPinError] = useState("");
+  // ── Account auth ───────────────────────────────────────────────────────────
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [ownerAccountId, setOwnerAccountId] = useState<string | null>(null);
+
+  // ── Stuck match override ───────────────────────────────────────────────────
+  const [stuckForceScoreA, setStuckForceScoreA] = useState<Record<string, string>>({});
+  const [stuckForceScoreB, setStuckForceScoreB] = useState<Record<string, string>>({});
+  const [stuckForceLoading, setStuckForceLoading] = useState<string | null>(null);
+  const [stuckForceError, setStuckForceError] = useState<string | null>(null);
 
   // ── SINGLE scoring mode ────────────────────────────────────────────────────
   const [orgScoringMode, setOrgScoringMode] = useState<OrgScoringMode>("final");
@@ -202,7 +208,17 @@ export default function OrganiserPage() {
     try { const s = localStorage.getItem("eps_join_" + code); if (s) { const p = JSON.parse(s); if (p.isOrganiser && p.deviceId) setDeviceId(p.deviceId); } } catch { }
     try { const rules = localStorage.getItem("eps_match_rules_" + code); if (rules) { const p = JSON.parse(rules) as TennisPayload; setTennisPayload(p); setEditSets(p.sets); setEditDeuceMode(p.rules.deuceMode); setEditTiebreak(p.rules.tiebreak); setEditSuperTiebreak(p.rules.superTiebreak); } } catch { }
     try { const ts = localStorage.getItem("eps_tennis_" + code); if (ts) setTennisState(JSON.parse(ts)); } catch { }
-    setContacts(loadContacts()); setBootstrapped(true);
+    setContacts(loadContacts());
+
+    Promise.all([
+      fetch("/api/auth/me").then(r => r.ok ? r.json() : null),
+      fetch("/api/sessions/" + code).then(r => r.ok ? r.json() : null),
+    ]).then(([me, sess]) => {
+      if (me?.id) setAccountId(me.id);
+      if (sess?.ownerAccountId) setOwnerAccountId(sess.ownerAccountId);
+      setAuthChecked(true);
+      setBootstrapped(true);
+    });
   }, [code]);
 
   useEffect(() => { if (!code) return; localStorage.setItem("eps_tennis_" + code, JSON.stringify(tennisState)); }, [tennisState, code]);
@@ -222,28 +238,33 @@ export default function OrganiserPage() {
   }, []);
 
   useEffect(() => {
-    if (!deviceId || !code) return;
+    if (!authChecked || !code) return;
     fetch("/api/sessions/" + code).then((r) => r.json()).then((data) => startTransition(() => applySession(data))).catch(() => setSessionError("Failed to load session."));
     const es = new EventSource("/api/sessions/" + code + "/stream"); esRef.current = es;
     es.onmessage = (e) => { try { const data = JSON.parse(e.data); startTransition(() => applySession(data)); } catch { } };
     es.onerror = () => { es.close(); if (!pollRef.current) { pollRef.current = setInterval(() => { fetch("/api/sessions/" + code).then((r) => r.json()).then((data) => startTransition(() => applySession(data))).catch(() => { }); }, 3000); } };
     return () => { es.close(); if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  }, [deviceId, code, applySession]);
+  }, [authChecked, code, applySession]);
 
-  // ── PIN recovery submit ────────────────────────────────────────────────────
-  async function submitPin() {
-    const pin = pinInput.trim(); if (!pin) return;
-    setPinLoading(true); setPinError("");
+  // ── Stuck match force-complete ─────────────────────────────────────────────
+  async function forceCompleteMatch(matchId: string) {
+    const sA = parseInt(stuckForceScoreA[matchId] ?? "", 10);
+    const sB = parseInt(stuckForceScoreB[matchId] ?? "", 10);
+    if (isNaN(sA) || isNaN(sB) || sA < 0 || sB < 0) return;
+    setStuckForceLoading(matchId);
+    setStuckForceError(null);
     try {
-      const r = await fetch("/api/sessions/" + code + "/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organiserPin: pin }) });
+      const r = await fetch(`/api/sessions/${code}/force-complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matchId, scoreA: sA, scoreB: sB }),
+      });
       const data = await r.json();
-      if (!r.ok) { setPinError(data.error ?? data.message ?? "Incorrect PIN — please try again."); setPinLoading(false); return; }
-      const newDeviceId: string = data.deviceId;
-      localStorage.setItem("eps_join_" + code, JSON.stringify({ deviceId: newDeviceId, isOrganiser: true }));
-      localStorage.setItem("eps_pin_" + code, pin);
-      setDeviceId(newDeviceId);
-    } catch { setPinError("Network error — please try again."); }
-    setPinLoading(false);
+      if (!r.ok) { setStuckForceError(data.error ?? "Failed to force complete"); setStuckForceLoading(null); return; }
+      setStuckForceScoreA(prev => { const n = {...prev}; delete n[matchId]; return n; });
+      setStuckForceScoreB(prev => { const n = {...prev}; delete n[matchId]; return n; });
+    } catch { setStuckForceError("Network error"); }
+    setStuckForceLoading(null);
   }
 
   function openSettings() { const tp = tennisPayload ?? { sets: 1, rules: { deuceMode: "traditional" as DeuceMode, tiebreak: true, superTiebreak: false } }; setEditSets(tp.sets); setEditDeuceMode(tp.rules.deuceMode); setEditTiebreak(tp.rules.tiebreak); setEditSuperTiebreak(tp.rules.superTiebreak); setShowSettings(true); }
@@ -442,44 +463,22 @@ export default function OrganiserPage() {
   const setPillStyle = (active: boolean): React.CSSProperties => ({ padding: "10px 14px", borderRadius: 12, cursor: "pointer", fontWeight: active ? 1000 : 900, flex: 1, border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.12)", background: active ? "rgba(255,107,0,0.15)" : "rgba(255,255,255,0.05)", color: active ? WHITE : WARM_WHITE, textAlign: "center" as const, fontSize: 13 });
   const deuceCardStyle = (active: boolean): React.CSSProperties => ({ borderRadius: 12, padding: "10px 14px", cursor: "pointer", display: "grid", gap: 2, border: active ? "1px solid " + ORANGE : "1px solid rgba(255,255,255,0.10)", background: active ? "rgba(255,107,0,0.12)" : "rgba(255,255,255,0.04)" });
 
-  if (!bootstrapped) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading...</div></div></div>;
+  if (!bootstrapped || !authChecked) return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Loading...</div></div></div>;
 
-  // ── PIN recovery screen ────────────────────────────────────────────────────
-  if (!deviceId) {
+  if (!accountId) {
+    if (typeof window !== "undefined") {
+      router.push("/login?next=/session/" + code + "/organiser");
+    }
+    return <div style={st.page}><div style={st.card}><div style={{ opacity: 0.7 }}>Redirecting to login...</div></div></div>;
+  }
+
+  if (accountId !== ownerAccountId) {
     return (
       <div style={st.page}>
         <div style={{ ...st.card, maxWidth: 420 }}>
-          <div style={st.row}>
-            <div>
-              <div style={st.title}>Organiser · {code}</div>
-              <div style={st.sub}>Enter your organiser PIN to rejoin</div>
-            </div>
-            <button style={st.btn} onClick={() => router.push("/")}>Home</button>
-          </div>
-          <div style={st.divider} />
-          <div style={{ fontSize: 13, color: WARM_WHITE, opacity: 0.7, lineHeight: 1.6, marginBottom: 16 }}>
-            Your organiser session was not found on this device. Enter the 4-digit PIN you received when you created session <strong style={{ color: ORANGE }}>{code}</strong>.
-          </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <input
-              style={{ flex: 1, background: "rgba(255,255,255,0.07)", color: WHITE, border: "1px solid rgba(255,255,255,0.18)", borderRadius: 12, padding: "14px 16px", fontSize: 28, fontWeight: 1100, outline: "none", textAlign: "center" as const, letterSpacing: 8, boxSizing: "border-box" as const }}
-              value={pinInput}
-              placeholder="0000"
-              inputMode="numeric"
-              maxLength={4}
-              onChange={(e) => { setPinError(""); setPinInput(e.target.value.replace(/[^\d]/g, "").slice(0, 4)); }}
-              onKeyDown={(e) => { if (e.key === "Enter") submitPin(); }}
-              autoFocus
-            />
-            <button
-              style={{ ...st.btnOrange, padding: "14px 20px", fontSize: 15, opacity: pinInput.length === 4 && !pinLoading ? 1 : 0.4 }}
-              onClick={submitPin}
-              disabled={pinInput.length !== 4 || pinLoading}
-            >
-              {pinLoading ? "Checking..." : "Enter"}
-            </button>
-          </div>
-          {pinError && <div style={st.errorBox}>{pinError}</div>}
+          <div style={st.title}>Access denied</div>
+          <div style={{ ...st.sub, marginTop: 8, lineHeight: 1.6 }}>This session was created by a different account. Only the session owner can access the organiser view.</div>
+          <button style={{ ...st.btn, marginTop: 20 }} onClick={() => router.push("/")}>Home</button>
         </div>
       </div>
     );
@@ -837,6 +836,42 @@ export default function OrganiserPage() {
           </>
         )}
 
+        {(() => {
+          if (!singleMatch || singleMatch.status !== "IN_PROGRESS") return null;
+          const now = Date.now();
+          const isStuck = singleMatch.scoreSubmissions.length === 0 &&
+            singleMatch.startedAt &&
+            (now - new Date(singleMatch.startedAt).getTime()) > 20 * 60 * 1000;
+          if (!isStuck) return null;
+          const minsStuck = Math.floor((now - new Date(singleMatch.startedAt!).getTime()) / 60000);
+          const sA = stuckForceScoreA[singleMatch.id] ?? "";
+          const sB = stuckForceScoreB[singleMatch.id] ?? "";
+          const canSubmit = !isNaN(parseInt(sA, 10)) && !isNaN(parseInt(sB, 10));
+          return (
+            <div style={{ marginTop: 12, borderRadius: 16, padding: 16, background: "rgba(255,64,64,0.08)", border: "1px solid rgba(255,64,64,0.30)" }}>
+              <div style={{ fontSize: 13, fontWeight: 1000, color: RED, marginBottom: 8 }}>⚠ Stuck match detected</div>
+              <div style={{ fontSize: 13, fontWeight: 900, color: WHITE, marginBottom: 4 }}>{a1n} &amp; {a2n} vs {b1n} &amp; {b2n}</div>
+              <div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.65, marginBottom: 10 }}>In progress for {minsStuck} minutes with no scores submitted.</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
+                <input type="number" min={0} max={99} placeholder="Team A sets" value={sA}
+                  onChange={e => setStuckForceScoreA(prev => ({ ...prev, [singleMatch.id]: e.target.value }))}
+                  style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 15, fontWeight: 900, outline: "none", textAlign: "center" as const }} />
+                <span style={{ opacity: 0.4, fontSize: 13 }}>–</span>
+                <input type="number" min={0} max={99} placeholder="Team B sets" value={sB}
+                  onChange={e => setStuckForceScoreB(prev => ({ ...prev, [singleMatch.id]: e.target.value }))}
+                  style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 15, fontWeight: 900, outline: "none", textAlign: "center" as const }} />
+                <button
+                  onClick={() => forceCompleteMatch(singleMatch.id)}
+                  disabled={!canSubmit || stuckForceLoading === singleMatch.id}
+                  style={{ borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 1000, cursor: canSubmit ? "pointer" : "default", border: "none", background: RED, color: WHITE, opacity: canSubmit && stuckForceLoading !== singleMatch.id ? 1 : 0.45 }}>
+                  {stuckForceLoading === singleMatch.id ? "Forcing..." : "Force Complete"}
+                </button>
+              </div>
+              {stuckForceError && stuckForceLoading === null && <div style={{ fontSize: 12, color: RED, marginTop: 6 }}>{stuckForceError}</div>}
+            </div>
+          );
+        })()}
+
         {orgScoringMode === "live" && (
           <>
             {isStarPointMoment && <div style={st.starPointBanner}>Star Point — next point wins the game</div>}
@@ -923,6 +958,50 @@ export default function OrganiserPage() {
       </div>
       {complete.length > 0 && <div style={{ ...st.hint, marginTop: 6 }}>Tap <strong style={{ color: GREEN }}>{complete.length} done</strong> to view and edit confirmed match scores.</div>}
       {serveReminderText && <div style={st.serveReminder}>{serveReminderText}</div>}
+      {(() => {
+        const now = Date.now();
+        const stuckMatches = inProgress.filter(m =>
+          m.scoreSubmissions.length === 0 &&
+          m.startedAt &&
+          (now - new Date(m.startedAt).getTime()) > 20 * 60 * 1000
+        );
+        if (stuckMatches.length === 0) return null;
+        return (
+          <div style={{ marginTop: 12, borderRadius: 16, padding: 16, background: "rgba(255,64,64,0.08)", border: "1px solid rgba(255,64,64,0.30)" }}>
+            <div style={{ fontSize: 13, fontWeight: 1000, color: RED, marginBottom: 8 }}>⚠ Stuck match detected</div>
+            {stuckMatches.map(m => {
+              const { a1, a2, b1, b2 } = names(m);
+              const courtName = Array.isArray(session!.courtNames) ? (session!.courtNames as (string|null)[])[( m.courtNumber ?? 1) - 1] || "Court " + m.courtNumber : "Court " + m.courtNumber;
+              const minsStuck = Math.floor((now - new Date(m.startedAt!).getTime()) / 60000);
+              const sA = stuckForceScoreA[m.id] ?? "";
+              const sB = stuckForceScoreB[m.id] ?? "";
+              const canSubmit = !isNaN(parseInt(sA, 10)) && !isNaN(parseInt(sB, 10));
+              return (
+                <div key={m.id} style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: WHITE, marginBottom: 4 }}>{courtName} — {a1} &amp; {a2} vs {b1} &amp; {b2}</div>
+                  <div style={{ fontSize: 12, color: WARM_WHITE, opacity: 0.65, marginBottom: 10 }}>In progress for {minsStuck} minutes with no scores submitted.</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
+                    <input type="number" min={0} max={99} placeholder="Team A" value={sA}
+                      onChange={e => setStuckForceScoreA(prev => ({ ...prev, [m.id]: e.target.value }))}
+                      style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 15, fontWeight: 900, outline: "none", textAlign: "center" as const }} />
+                    <span style={{ opacity: 0.4, fontSize: 13 }}>–</span>
+                    <input type="number" min={0} max={99} placeholder="Team B" value={sB}
+                      onChange={e => setStuckForceScoreB(prev => ({ ...prev, [m.id]: e.target.value }))}
+                      style={{ width: 80, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, padding: "8px 12px", color: WHITE, fontSize: 15, fontWeight: 900, outline: "none", textAlign: "center" as const }} />
+                    <button
+                      onClick={() => forceCompleteMatch(m.id)}
+                      disabled={!canSubmit || stuckForceLoading === m.id}
+                      style={{ borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 1000, cursor: canSubmit ? "pointer" : "default", border: "none", background: RED, color: WHITE, opacity: canSubmit && stuckForceLoading !== m.id ? 1 : 0.45 }}>
+                      {stuckForceLoading === m.id ? "Forcing..." : "Force Complete"}
+                    </button>
+                  </div>
+                  {stuckForceError && stuckForceLoading === null && <div style={{ fontSize: 12, color: RED, marginTop: 6 }}>{stuckForceError}</div>}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
       <div style={st.divider} />
       <div style={st.sectionLabel}>Courts</div>
       <div style={{ display: "grid", gap: 10, gridTemplateColumns: courtGridCols }}>

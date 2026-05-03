@@ -24,7 +24,8 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    return NextResponse.json(session);
+    const { organiserPin: _pin, ...safeSession } = session;
+    return NextResponse.json(safeSession);
   } catch (err) {
     console.error("GET /api/sessions/[code] error:", err);
     return NextResponse.json(

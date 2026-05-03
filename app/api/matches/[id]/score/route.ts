@@ -1,43 +1,65 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "../../../../../lib/prisma";
 
-async function autoAssignNextMatch(sessionId: string, freedCourt: number) {
+async function autoAssignNextMatches(sessionId: string) {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { courts: true },
+  });
+  if (!session) return;
+
   const activeMatches = await prisma.match.findMany({
     where: { sessionId, status: "IN_PROGRESS" },
   });
 
   const busyPlayerIds = new Set<string>();
+  const busyCourts = new Set<number>();
   for (const m of activeMatches) {
     busyPlayerIds.add(m.teamAPlayer1);
     busyPlayerIds.add(m.teamAPlayer2);
     busyPlayerIds.add(m.teamBPlayer1);
     busyPlayerIds.add(m.teamBPlayer2);
+    if (m.courtNumber) busyCourts.add(m.courtNumber);
   }
+
+  const freeCourts: number[] = [];
+  for (let i = 1; i <= session.courts; i++) {
+    if (!busyCourts.has(i)) freeCourts.push(i);
+  }
+  if (freeCourts.length === 0) return;
 
   const pendingMatches = await prisma.match.findMany({
     where: { sessionId, status: "PENDING" },
     orderBy: { queuePosition: "asc" },
   });
 
-  const eligible = pendingMatches.find(
-    (m) =>
-      !busyPlayerIds.has(m.teamAPlayer1) &&
-      !busyPlayerIds.has(m.teamAPlayer2) &&
-      !busyPlayerIds.has(m.teamBPlayer1) &&
-      !busyPlayerIds.has(m.teamBPlayer2)
-  );
-
-  if (!eligible) return;
+  const toAssign: { id: string; courtNumber: number }[] = [];
+  for (const court of freeCourts) {
+    const eligible = pendingMatches.find(
+      (m) =>
+        !toAssign.some((a) => a.id === m.id) &&
+        !busyPlayerIds.has(m.teamAPlayer1) &&
+        !busyPlayerIds.has(m.teamAPlayer2) &&
+        !busyPlayerIds.has(m.teamBPlayer1) &&
+        !busyPlayerIds.has(m.teamBPlayer2)
+    );
+    if (!eligible) continue;
+    toAssign.push({ id: eligible.id, courtNumber: court });
+    busyPlayerIds.add(eligible.teamAPlayer1);
+    busyPlayerIds.add(eligible.teamAPlayer2);
+    busyPlayerIds.add(eligible.teamBPlayer1);
+    busyPlayerIds.add(eligible.teamBPlayer2);
+  }
+  if (toAssign.length === 0) return;
 
   await prisma.$transaction([
-    prisma.match.update({
-      where: { id: eligible.id },
-      data: { status: "IN_PROGRESS", courtNumber: freedCourt, startedAt: new Date() },
-    }),
-    prisma.session.update({
-      where: { id: sessionId },
-      data: { updatedAt: new Date() },
-    }),
+    ...toAssign.map(({ id, courtNumber }) =>
+      prisma.match.update({
+        where: { id },
+        data: { status: "IN_PROGRESS", courtNumber, startedAt: new Date() },
+      })
+    ),
+    prisma.session.update({ where: { id: sessionId }, data: { updatedAt: new Date() } }),
   ]);
 }
 
@@ -79,7 +101,7 @@ export async function POST(
         }),
         prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
-      if (match.courtNumber) await autoAssignNextMatch(match.sessionId, match.courtNumber);
+      await autoAssignNextMatches(match.sessionId);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
@@ -96,7 +118,7 @@ export async function POST(
         }),
         prisma.session.update({ where: { id: match.sessionId }, data: { updatedAt: new Date() } }),
       ]);
-      if (match.courtNumber) await autoAssignNextMatch(match.sessionId, match.courtNumber);
+      await autoAssignNextMatches(match.sessionId);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
@@ -136,7 +158,7 @@ export async function POST(
           data: { updatedAt: new Date() },
         }),
       ]);
-      if (match.courtNumber) await autoAssignNextMatch(match.sessionId, match.courtNumber);
+      await autoAssignNextMatches(match.sessionId);
       return NextResponse.json({ match: updated, result: "CONFIRMED" });
     }
 
